@@ -4,23 +4,17 @@ import { useState, useEffect } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
-type NavItem = {
-  label: string
-  href: string
-  icon: string
-}
+type NavItem = { label: string; href: string; icon: string }
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Home", href: "/chat", icon: "⌂" },
   { label: "History", href: "/chat/history", icon: "◷" },
 ]
-
 const RESOURCE_ITEMS: NavItem[] = [
   { label: "Best Practices", href: "/docs", icon: "✦" },
   { label: "Get Plugin", href: "/plugin", icon: "↓" },
   { label: "Community", href: "/community", icon: "◎" },
 ]
-
 const DEV_ITEMS: NavItem[] = [
   { label: "Model Logs", href: "/dev/models", icon: "◈" },
   { label: "Error Logs", href: "/dev/errors", icon: "⚠" },
@@ -28,76 +22,66 @@ const DEV_ITEMS: NavItem[] = [
   { label: "Command", href: "/dev/command", icon: "›" },
 ]
 
-// ✅ DEV ONLY: remove this when auth is live
-const DEV_MOCK_USER = process.env.NODE_ENV === "development"
-  ? { id: "1", name: "DevUser", displayName: "Dev User", avatarUrl: "" }
-  : null
+const DEV_MOCK_USER =
+  process.env.NODE_ENV === "development"
+    ? { id: "dev-1", name: "DevUser", displayName: "Dev User", avatarUrl: "" }
+    : null
 
 type RobloxUser = {
   id: string
   name: string
   displayName: string
   avatarUrl: string
-  credits?: number
 }
 
 export default function Sidebar() {
   const pathname = usePathname()
   const [devOpen, setDevOpen] = useState(false)
   const [user, setUser] = useState<RobloxUser | null>(null)
-  const [credits, setCredits] = useState<number>(0)  // ✅ separate credits state
+  const [credits, setCredits] = useState<number | null>(null)
   const [serverOk, setServerOk] = useState(true)
   const [pluginStatus, setPluginStatus] = useState<"connected" | "waiting" | "disconnected">("waiting")
 
-  // ── Load user from cookie (or dev mock) ────────────────────────────────
+  // ── Load user via server API (reads HttpOnly cookie — document.cookie can't) ──
   useEffect(() => {
-    try {
-      const cookies = document.cookie.split("; ")
-      const match = cookies.find((r) => r.startsWith("roblox_user="))
-      if (match) {
-        const val = match.substring("roblox_user=".length)
-        const parsed = JSON.parse(decodeURIComponent(val))
-        setUser(parsed)
-        return
-      }
-    } catch (e) {
-      console.log("Cookie parse error:", e)
+    async function loadUser() {
+      try {
+        const res = await fetch("/api/user/me")
+        if (res.ok) {
+          const data = await res.json()
+          if (data.loggedIn && data.user?.id) {
+            setUser(data.user)
+            return
+          }
+        }
+      } catch {}
+      if (DEV_MOCK_USER) setUser(DEV_MOCK_USER)
     }
-
-    // ✅ Fall back to dev mock if no cookie
-    if (DEV_MOCK_USER) {
-      setUser(DEV_MOCK_USER)
-    }
+    loadUser()
   }, [])
 
-  // ── Fetch real credits from API whenever user loads ─────────────────────
+  // ── Fetch real credits from KV ──────────────────────────────────────────
   useEffect(() => {
     if (!user?.id) return
-
     async function fetchCredits() {
       try {
         const res = await fetch(`/api/credits?robloxId=${user!.id}`)
         if (res.ok) {
           const data = await res.json()
-          setCredits(data.credits ?? 0)  // ✅ real balance from KV/memory
+          setCredits(data.credits ?? 0)
         }
-      } catch {
-        // non-critical
-      }
+      } catch {}
     }
-
     fetchCredits()
-    const interval = setInterval(fetchCredits, 15000) // refresh every 15s
-    return () => clearInterval(interval)
+    const id = setInterval(fetchCredits, 15_000)
+    return () => clearInterval(id)
   }, [user?.id])
 
-  // ── Plugin status polling ───────────────────────────────────────────────
+  // ── Plugin status ───────────────────────────────────────────────────────
   useEffect(() => {
-    async function checkPlugin() {
+    async function check() {
       try {
-        const url = user?.id
-          ? `/api/plugin/status?robloxId=${user.id}`
-          : `/api/plugin/status`
+        const url = user?.id ? `/api/plugin/status?robloxId=${user.id}` : `/api/plugin/status`
         const res = await fetch(url)
         if (res.ok) {
           const data = await res.json()
@@ -110,10 +94,9 @@ export default function Sidebar() {
         setServerOk(false)
       }
     }
-
-    checkPlugin()
-    const interval = setInterval(checkPlugin, 5000)
-    return () => clearInterval(interval)
+    check()
+    const id = setInterval(check, 5_000)
+    return () => clearInterval(id)
   }, [user?.id])
 
   function NavLink({ item }: { item: NavItem }) {
@@ -156,9 +139,9 @@ export default function Sidebar() {
         </Link>
       </div>
 
-      {/* Main nav */}
+      {/* Nav */}
       <div className="px-3 space-y-0.5">
-        {NAV_ITEMS.map((item) => <NavLink key={item.href + item.label} item={item} />)}
+        {NAV_ITEMS.map((item) => <NavLink key={item.href} item={item} />)}
       </div>
 
       {/* Resources */}
@@ -177,8 +160,7 @@ export default function Sidebar() {
           onClick={() => setDevOpen((o) => !o)}
           className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/[0.04] text-xs transition-all"
         >
-          <span>⌘</span>
-          <span>Dev Console</span>
+          <span>⌘</span><span>Dev Console</span>
           <span className="ml-auto">{devOpen ? "▴" : "▾"}</span>
         </button>
         {devOpen && (
@@ -213,29 +195,30 @@ export default function Sidebar() {
           <span className="text-white/25 text-[10px]">Plugin</span>
           <span className={`text-[10px] font-medium ${
             pluginStatus === "connected" ? "text-green-400" :
-            pluginStatus === "waiting" ? "text-yellow-400" : "text-red-400"
+            pluginStatus === "waiting"   ? "text-yellow-400" : "text-red-400"
           }`}>
             {pluginStatus === "connected" ? "Connected" : pluginStatus === "waiting" ? "Waiting" : "Off"}
           </span>
         </div>
       </div>
 
-      {/* User */}
+      {/* User — bottom left */}
       <div className="px-3 pb-4 border-t border-white/[0.05] pt-3">
         <div className="flex items-center gap-2.5 px-2">
           <div className="w-7 h-7 rounded-lg bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-xs text-purple-300 font-bold shrink-0 overflow-hidden">
-            {user?.avatarUrl
-              ? <img src={user.avatarUrl} alt="avatar" className="w-full h-full object-cover" />
-              : user?.name?.[0]?.toUpperCase() ?? "E"
-            }
+            {user?.avatarUrl ? (
+              <img src={user.avatarUrl} alt="pfp" className="w-full h-full object-cover" />
+            ) : (
+              user?.name?.[0]?.toUpperCase() ?? "?"
+            )}
           </div>
           <div className="flex-1 min-w-0">
-            {/* ✅ Shows real name, dev fallback, or Guest */}
             <p className="text-white/60 text-xs font-medium truncate">
-              {user?.displayName ?? user?.name ?? "Guest"}
+              {user?.displayName ?? user?.name ?? "Not signed in"}
             </p>
-            {/* ✅ Shows real credits from KV, not cookie */}
-            <p className="text-purple-400/60 text-[10px]">{credits} credits</p>
+            <p className="text-purple-400/60 text-[10px]">
+              {credits === null ? "loading..." : `${credits} credits`}
+            </p>
           </div>
           <button className="text-[10px] text-purple-400/60 hover:text-purple-300 border border-purple-500/20 px-1.5 py-0.5 rounded transition-all shrink-0">
             Pro

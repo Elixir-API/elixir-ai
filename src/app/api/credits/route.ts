@@ -6,6 +6,10 @@ export async function GET(req: NextRequest) {
   if (!robloxId) {
     return NextResponse.json({ error: "Missing robloxId" }, { status: 400 })
   }
-  const credits = await getCredits(robloxId)
-  return NextResponse.json({ credits })
+  try {
+    const credits = await getCredits(robloxId)
+    return NextResponse.json({ credits })
+  } catch {
+    return NextResponse.json({ error: "Failed" }, { status: 500 })
+  }
 }

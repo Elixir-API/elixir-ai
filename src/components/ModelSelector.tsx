@@ -1,225 +1,254 @@
-// components/ModelSelector.tsx
 "use client"
+
 import { useState, useRef, useEffect } from "react"
-import { estimateCreditCost, formatCredits } from "@/lib/pricing"
 
 export type AIModel = {
   id: string
-  label: string
+  name: string
+  provider: string
   apiId: string
-  badge: string
-  badgeColor: string
-  free: boolean
   tier: "free" | "low" | "mid" | "high"
-  descriptor: string
-  stats: { coding: number; modeling: number; ui: number }
+  speed: "FAST" | "SLOW" | "SMART"
+  badge?: string
+  creditCostPerMsg: string
+  simpleTasks: number
+  complexTasks: number
+  free?: boolean
+  minCredits?: number
 }
 
 export const MODELS: AIModel[] = [
-  // ── FREE ──────────────────────────────────────────────────────────────
+  // ── FREE ──────────────────────────────────────────────────────────────────
   {
     id: "qwen-coder",
-    label: "Qwen 2.5 Coder 32B",
+    name: "Qwen 2.5 Coder 32B",
+    provider: "qwen",
     apiId: "qwen/qwen-2.5-coder-32b-instruct:free",
-    badge: "FREE", badgeColor: "#4ade80", free: true, tier: "free",
-    descriptor: "SLOW",
-    stats: { coding: 1, modeling: 2, ui: 2 },
+    tier: "free",
+    speed: "SLOW",
+    badge: "FREE",
+    creditCostPerMsg: "Free",
+    simpleTasks: 4,
+    complexTasks: 3,
+    free: true,
   },
-
-  // ── LOW TIER ──────────────────────────────────────────────────────────
+  // ── LOW ───────────────────────────────────────────────────────────────────
   {
     id: "gemini-flash",
-    label: "Gemini 2.0 Flash",
+    name: "Gemini 2.0 Flash",
+    provider: "google",
     apiId: "google/gemini-2.0-flash-001",
-    badge: "LOW", badgeColor: "#86efac", free: false, tier: "low",
-    descriptor: "FAST",
-    stats: { coding: 2, modeling: 3, ui: 4 },
+    tier: "low",
+    speed: "FAST",
+    creditCostPerMsg: "~0.3 cr",
+    simpleTasks: 5,
+    complexTasks: 3,
   },
   {
     id: "llama-70b",
-    label: "Llama 3.3 70B",
+    name: "Llama 3.3 70B",
+    provider: "meta",
     apiId: "meta-llama/llama-3.3-70b-instruct",
-    badge: "LOW", badgeColor: "#86efac", free: false, tier: "low",
-    descriptor: "FAST · BASIC",
-    stats: { coding: 2, modeling: 2, ui: 3 },
+    tier: "low",
+    speed: "FAST",
+    badge: "BASIC",
+    creditCostPerMsg: "~0.2 cr",
+    simpleTasks: 4,
+    complexTasks: 3,
   },
-
-  // ── MID TIER ──────────────────────────────────────────────────────────
+  // ── MID ───────────────────────────────────────────────────────────────────
   {
     id: "deepseek-r1",
-    label: "DeepSeek R1",
+    name: "DeepSeek R1",
+    provider: "deepseek",
     apiId: "deepseek/deepseek-r1",
-    badge: "MID", badgeColor: "#60a5fa", free: false, tier: "mid",
-    descriptor: "SMART · SLOW",
-    stats: { coding: 3, modeling: 3, ui: 3 },
+    tier: "mid",
+    speed: "SMART",
+    creditCostPerMsg: "~1.5 cr",
+    simpleTasks: 5,
+    complexTasks: 5,
   },
   {
     id: "gpt4o-mini",
-    label: "GPT-4o Mini",
+    name: "GPT-4o Mini",
+    provider: "openai",
     apiId: "openai/gpt-4o-mini",
-    badge: "MID", badgeColor: "#60a5fa", free: false, tier: "mid",
-    descriptor: "SMART · FAST",
-    stats: { coding: 3, modeling: 3, ui: 4 },
+    tier: "mid",
+    speed: "FAST",
+    creditCostPerMsg: "~0.4 cr",
+    simpleTasks: 5,
+    complexTasks: 4,
   },
-
-  // ── HIGH TIER ─────────────────────────────────────────────────────────
+  // ── HIGH ──────────────────────────────────────────────────────────────────
   {
     id: "claude-sonnet",
-    label: "Claude Sonnet 4.5",
+    name: "Claude Sonnet 4.5",
+    provider: "anthropic",
     apiId: "anthropic/claude-sonnet-4-5",
-    badge: "ELITE", badgeColor: "#f59e0b", free: false, tier: "high",
-    descriptor: "SMART · FAST",
-    stats: { coding: 5, modeling: 5, ui: 5 },
+    tier: "high",
+    speed: "SMART",
+    creditCostPerMsg: "~10 cr",
+    simpleTasks: 5,
+    complexTasks: 5,
+    minCredits: 10,
   },
   {
     id: "gpt4o",
-    label: "GPT-4o",
+    name: "GPT-4o",
+    provider: "openai",
     apiId: "openai/gpt-4o",
-    badge: "ELITE", badgeColor: "#f59e0b", free: false, tier: "high",
-    descriptor: "SMART · FAST",
-    stats: { coding: 5, modeling: 4, ui: 5 },
+    tier: "high",
+    speed: "FAST",
+    creditCostPerMsg: "~7 cr",
+    simpleTasks: 5,
+    complexTasks: 5,
+    minCredits: 7,
   },
 ]
 
-const TIER_META: Record<AIModel["tier"], { label: string; color: string }> = {
-  free: { label: "Free",               color: "#4ade80" },
-  low:  { label: "Low Tier · Credits", color: "#86efac" },
-  mid:  { label: "Mid Tier · Credits", color: "#60a5fa" },
-  high: { label: "High Tier · Credits",color: "#f59e0b" },
+const TIER_LABEL: Record<string, string> = {
+  free: "FREE",
+  low:  "LOW TIER · CREDITS",
+  mid:  "MID TIER · CREDITS",
+  high: "HIGH TIER · CREDITS",
 }
 
-// ── Mini 3-bar stat chart ──────────────────────────────────────────────
-function StatBars({ stats }: { stats: AIModel["stats"] }) {
-  const bars = [
-    { label: "C", value: stats.coding,   color: "#a78bfa" },
-    { label: "M", value: stats.modeling, color: "#60a5fa" },
-    { label: "U", value: stats.ui,       color: "#34d399" },
-  ]
+const TIER_ORDER = ["free", "low", "mid", "high"] as const
+
+const SPEED_COLOR: Record<string, string> = {
+  FAST:  "text-green-400",
+  SLOW:  "text-yellow-400",
+  SMART: "text-blue-400",
+}
+
+const PROVIDER_ICON: Record<string, { letter: string; color: string }> = {
+  qwen:      { letter: "Q", color: "text-green-400" },
+  google:    { letter: "G", color: "text-blue-400" },
+  meta:      { letter: "M", color: "text-purple-400" },
+  deepseek:  { letter: "D", color: "text-cyan-400" },
+  openai:    { letter: "⊕", color: "text-emerald-400" },
+  anthropic: { letter: "A", color: "text-orange-400" },
+}
+
+function MiniBar({ value }: { value: number }) {
   return (
-    <div className="flex flex-col gap-[3px] w-16 shrink-0">
-      {bars.map((bar) => (
-        <div key={bar.label} className="flex items-center gap-1">
-          <span className="text-[7px] text-white/20 w-2 shrink-0">{bar.label}</span>
-          <div className="flex-1 h-[3px] bg-white/5 rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full"
-              style={{
-                width: `${(bar.value / 5) * 100}%`,
-                backgroundColor: bar.color + "aa",
-              }}
-            />
-          </div>
-          <span className="text-[7px] text-white/25 w-2 text-right shrink-0">{bar.value}</span>
-        </div>
+    <div className="flex gap-0.5">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className={`w-2 h-1 rounded-sm ${i < value ? "bg-purple-400" : "bg-white/10"}`} />
       ))}
     </div>
   )
 }
 
-// ── Props ──────────────────────────────────────────────────────────────
-interface Props {
+export default function ModelSelector({
+  value,
+  onChange,
+  userCredits = 0,
+}: {
   value: string
   onChange: (model: AIModel) => void
-  userCredits: number
-  currentPrompt?: string
-}
-
-export default function ModelSelector({ value, onChange, userCredits, currentPrompt = "" }: Props) {
+  userCredits?: number
+}) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const selected = MODELS.find((m) => m.id === value) ?? MODELS[0]
-  const estimate = estimateCreditCost(selected.apiId, currentPrompt || "make a spinning part")
+  const icon = PROVIDER_ICON[selected.provider] ?? { letter: "?", color: "text-white/40" }
 
-  // Close on outside click
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
+    function handler(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
-    document.addEventListener("mousedown", handleClick)
-    return () => document.removeEventListener("mousedown", handleClick)
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
   }, [])
 
-  const TIERS: AIModel["tier"][] = ["free", "low", "mid", "high"]
+  const grouped = TIER_ORDER.reduce<Record<string, AIModel[]>>((acc, tier) => {
+    acc[tier] = MODELS.filter((m) => m.tier === tier)
+    return acc
+  }, {} as Record<string, AIModel[]>)
 
   return (
-    <div className="relative flex flex-col gap-1" ref={ref}>
-
-      {/* ── Trigger button ────────────────────────────────────────────── */}
+    <div ref={ref} className="relative">
+      {/* Trigger */}
       <button
-        onClick={() => setOpen((p) => !p)}
-        className="flex items-center justify-between bg-white/[0.04] border border-white/[0.08] text-white/80 text-xs rounded-lg pl-3 pr-2 py-1.5 hover:border-white/20 transition-all w-full"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:border-white/20 transition-all"
       >
-        <div className="flex items-center gap-2">
-          <span>{selected.label}</span>
-          <span
-            className="text-[8px] font-bold tracking-wider"
-            style={{ color: selected.badgeColor }}
-          >
-            {selected.descriptor}
-          </span>
+        <div className="w-5 h-5 rounded bg-white/5 border border-white/10 flex items-center justify-center text-[10px] font-bold shrink-0">
+          <span className={icon.color}>{icon.letter}</span>
         </div>
-        {/* ✅ Arrow rotates up when open */}
-        <span
-          className={`text-white/30 text-[10px] ml-2 inline-block transition-transform duration-200 ${
-            open ? "rotate-180" : "rotate-0"
-          }`}
-        >
-          ▾
+        <span className="text-white/70 text-sm">{selected.name}</span>
+        {selected.badge && (
+          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+            selected.badge === "FREE"
+              ? "text-green-400 bg-green-500/10 border-green-500/20"
+              : "text-blue-400 bg-blue-500/10 border-blue-500/20"
+          }`}>{selected.badge}</span>
+        )}
+        <span className={`text-[9px] font-medium ${SPEED_COLOR[selected.speed]}`}>
+          {selected.speed}
         </span>
+        <span className="text-white/20 text-xs">▾</span>
       </button>
 
-      {/* ── Dropdown — opens UPWARD ───────────────────────────────────── */}
+      {/* Dropdown */}
       {open && (
-        <div className="absolute bottom-full left-0 mb-2 z-50 w-[300px] bg-[#0f0f0f] border border-white/10 rounded-xl shadow-2xl overflow-hidden">
-          {TIERS.map((tier) => {
-            const tierModels = MODELS.filter((m) => m.tier === tier)
-            if (!tierModels.length) return null
-            const { label, color } = TIER_META[tier]
-
+        <div className="absolute bottom-full mb-2 left-0 w-80 rounded-xl border border-white/10 bg-[#0d0d0d] shadow-2xl z-50 overflow-hidden">
+          {TIER_ORDER.map((tier) => {
+            const tierModels = grouped[tier]
+            if (!tierModels?.length) return null
             return (
               <div key={tier}>
-                {/* Section header */}
-                <div
-                  className="px-3 py-1.5 text-[9px] tracking-widest uppercase font-semibold border-b border-white/[0.05]"
-                  style={{ color: color + "70" }}
-                >
-                  {label}
+                <div className="px-3 py-1.5 bg-white/[0.02] border-b border-white/[0.05]">
+                  <span className="text-[9px] font-bold text-white/25 tracking-widest uppercase">
+                    {TIER_LABEL[tier]}
+                  </span>
                 </div>
-
-                {tierModels.map((m) => {
-                  const est = estimateCreditCost(m.apiId, currentPrompt || "make a spinning part")
-                  const canAfford = m.free || userCredits >= est.credits
-
+                {tierModels.map((model) => {
+                  const isLocked = !model.free && model.minCredits !== undefined && userCredits < model.minCredits
+                  const isSelected = model.id === selected.id
+                  const pIcon = PROVIDER_ICON[model.provider] ?? { letter: "?", color: "text-white/40" }
                   return (
                     <button
-                      key={m.id}
-                      onClick={() => { onChange(m); setOpen(false) }}
-                      disabled={!canAfford}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 transition-all text-left
-                        ${value === m.id ? "bg-purple-500/15 text-white" : "text-white/70 hover:bg-white/[0.04]"}
-                        ${!canAfford ? "opacity-35 cursor-not-allowed" : "cursor-pointer"}
-                      `}
+                      key={model.id}
+                      disabled={isLocked}
+                      onClick={() => { if (!isLocked) { onChange(model); setOpen(false) } }}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-all ${
+                        isSelected ? "bg-purple-500/10"
+                        : isLocked ? "opacity-40 cursor-not-allowed"
+                        : "hover:bg-white/[0.04]"
+                      }`}
                     >
-                      {/* Left: name + descriptor + cost */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-xs font-medium truncate">{m.label}</span>
-                          <span
-                            className="text-[8px] font-bold tracking-wider shrink-0"
-                            style={{ color: m.badgeColor }}
-                          >
-                            {m.descriptor}
-                          </span>
-                        </div>
-                        <span className="text-[9px] text-white/25 mt-0.5 block">
-                          {est.isFree
-                            ? "No credits used"
-                            : `~${formatCredits(est.credits)} credits / req`}
-                        </span>
+                      <div className="w-6 h-6 rounded bg-white/5 border border-white/10 flex items-center justify-center text-[10px] font-bold shrink-0">
+                        <span className={pIcon.color}>{pIcon.letter}</span>
                       </div>
-
-                      {/* Right: stat bars */}
-                      <StatBars stats={m.stats} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          <span className="text-white/80 text-xs font-medium truncate">{model.name}</span>
+                          {model.badge && (
+                            <span className={`text-[9px] font-bold px-1 py-0.5 rounded border shrink-0 ${
+                              model.badge === "FREE"
+                                ? "text-green-400 bg-green-500/10 border-green-500/20"
+                                : "text-blue-400 bg-blue-500/10 border-blue-500/20"
+                            }`}>{model.badge}</span>
+                          )}
+                          <span className={`text-[9px] font-medium shrink-0 ${SPEED_COLOR[model.speed]}`}>
+                            {model.speed}
+                          </span>
+                          {isLocked && (
+                            <span className="text-[9px] text-white/25 ml-auto shrink-0">
+                              🔒 need {model.minCredits} cr
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-white/30">
+                          {model.free ? "No credits used" : model.creditCostPerMsg + " / msg"}
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-1 shrink-0">
+                        <MiniBar value={model.simpleTasks} />
+                        <MiniBar value={model.complexTasks} />
+                      </div>
                     </button>
                   )
                 })}
@@ -228,27 +257,6 @@ export default function ModelSelector({ value, onChange, userCredits, currentPro
           })}
         </div>
       )}
-
-      {/* ── Cost pill ─────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-1.5">
-        <span
-          className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded-full"
-          style={{ color: selected.badgeColor, background: selected.badgeColor + "18" }}
-        >
-          {selected.badge}
-        </span>
-        {estimate.isFree ? (
-          <span className="text-[10px] text-green-400/60">No credits used</span>
-        ) : (
-          <span className="text-[10px] text-white/30">
-            ~<span className="text-white/55 font-medium">{formatCredits(estimate.credits)}</span> credits this request
-          </span>
-        )}
-        {!estimate.isFree && userCredits < estimate.credits && (
-          <span className="text-[9px] text-red-400/70 ml-auto">⚠ low credits</span>
-        )}
-      </div>
-
     </div>
   )
 }

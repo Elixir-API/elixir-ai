@@ -3,38 +3,17 @@
 import { useState, useRef, useEffect } from "react"
 import ModelSelector, { MODELS, type AIModel } from "@/components/ModelSelector"
 import ShopModal from "@/components/ShopModal"
+import { estimateCreditCost, formatCredits } from "@/lib/pricing"
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-type StepType = "create" | "modify" | "delete" | "test" | "fix"
-type StepStatus = "pending" | "running" | "done" | "error"
-
-type PlanStep = {
+type Message = {
   id: string
-  type: StepType
-  description: string
-  location?: string | null
-  status: StepStatus
-  code?: string
-}
-
-type AssistantMsg = {
-  id: string
-  role: "assistant"
-  thinking: string
-  steps: PlanStep[]
-  summary: string
-  phase: "thinking" | "executing" | "done" | "error"
-  errorText?: string
-}
-
-type UserMsg = {
-  id: string
-  role: "user"
+  role: "user" | "assistant"
   content: string
+  streaming?: boolean
+  creditsUsed?: number
 }
-
-type ChatMessage = AssistantMsg | UserMsg
 
 type RobloxUser = {
   id: string
@@ -42,193 +21,106 @@ type RobloxUser = {
   avatarUrl?: string
 }
 
-// ── Utilities ──────────────────────────────────────────────────────────────────
+// ── Fetch user from server (reads HttpOnly cookie) ────────────────────────────
 
-function sleep(ms: number) {
-  return new Promise<void>((r) => setTimeout(r, ms))
-}
-
-// Try reading cookie — may fail if HttpOnly
-function getRobloxUserFromCookie(): RobloxUser | null {
-  try {
-    const cookieNames = ["roblox_user", "user", "session", "__session", "auth"]
-    for (const name of cookieNames) {
-      const raw = document.cookie
-        .split("; ")
-        .find((r) => r.startsWith(`${name}=`))
-        ?.substring(`${name}=`.length)
-      if (!raw) continue
-      const obj = JSON.parse(decodeURIComponent(raw))
-      const id = obj?.id ?? obj?.robloxId ?? obj?.userId ?? obj?.user?.id
-      const uname =
-        obj?.name ?? obj?.username ?? obj?.displayName ?? obj?.user?.name ?? "User"
-      const avatarUrl = obj?.avatarUrl ?? obj?.avatar ?? obj?.thumbnailUrl ?? null
-      if (id) return { id: String(id), name: String(uname), avatarUrl }
-    }
-    return null
-  } catch {
-    return null
-  }
-}
-
-// Server fetch — bypasses HttpOnly restriction
-async function fetchUserFromServer(): Promise<RobloxUser | null> {
+async function fetchUser(): Promise<RobloxUser | null> {
   try {
     const res = await fetch("/api/user/me")
     if (!res.ok) return null
-    const data = await res.json()
-    if (!data.loggedIn || !data.user?.id) return null
+    const d = await res.json()
+    if (!d.loggedIn) return null
     return {
-      id: String(data.user.id),
-      name: data.user.name ?? "User",
-      avatarUrl: data.user.avatar ?? undefined,
+      id: String(d.user.id),
+      name: d.user.name ?? "User",
+      avatarUrl: d.user.avatarUrl ?? undefined,
     }
   } catch {
     return null
   }
 }
 
-function renderMarkdown(text: string) {
-  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
+// ── Code block with copy ──────────────────────────────────────────────────────
+
+function CodeBlock({ code, lang }: { code: string; lang?: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(code)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   return (
-    <>
-      {parts.map((p, i) => {
-        if (p.startsWith("**") && p.endsWith("**"))
-          return (
-            <strong key={i} className="text-white/85 font-semibold">
-              {p.slice(2, -2)}
-            </strong>
-          )
-        if (p.startsWith("`") && p.endsWith("`"))
-          return (
-            <code
-              key={i}
-              className="bg-white/10 text-purple-300 px-1 rounded text-[11px] font-mono"
-            >
-              {p.slice(1, -1)}
-            </code>
-          )
-        return <span key={i}>{p}</span>
-      })}
-    </>
-  )
-}
-
-// ── Sub-components ─────────────────────────────────────────────────────────────
-
-const STEP_ICON: Record<StepType, string> = {
-  create: "📄",
-  modify: "✏️",
-  delete: "🗑️",
-  test: "👁",
-  fix: "🔧",
-}
-
-function ThinkingDots() {
-  return (
-    <div className="flex items-center gap-1 h-4">
-      <span className="w-1.5 h-1.5 bg-white/20 rounded-full animate-bounce [animation-delay:0ms]" />
-      <span className="w-1.5 h-1.5 bg-white/20 rounded-full animate-bounce [animation-delay:120ms]" />
-      <span className="w-1.5 h-1.5 bg-white/20 rounded-full animate-bounce [animation-delay:240ms]" />
-    </div>
-  )
-}
-
-function PlanEmbed({ steps }: { steps: PlanStep[] }) {
-  return (
-    <div className="rounded-xl border border-white/[0.08] bg-white/[0.015] overflow-hidden w-full max-w-xs">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-white/[0.05]">
-        <span className="text-white/20 text-[10px]">⚙</span>
-        <span className="text-white/25 text-[10px] font-semibold uppercase tracking-widest">
-          Plans
+    <div className="rounded-xl border border-white/10 bg-[#09090f] overflow-hidden my-2.5">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.05] bg-white/[0.02]">
+        <span className="text-white/20 text-[10px] font-mono uppercase tracking-widest">
+          {lang && lang !== "lua" && lang !== "luau" ? lang : "lua"}
         </span>
+        <button
+          onClick={handleCopy}
+          className="text-white/25 hover:text-white/60 text-xs transition-colors flex items-center gap-1"
+        >
+          {copied ? "✓ Copied" : "⧉ Copy"}
+        </button>
       </div>
-      <div className="divide-y divide-white/[0.04]">
-        {steps.map((step) => (
-          <div
-            key={step.id}
-            className={`flex items-center gap-3 px-3 py-2.5 transition-all duration-500 ${
-              step.status === "running" ? "bg-purple-500/5" : ""
-            }`}
-          >
-            <div className="shrink-0 w-4 flex items-center justify-center">
-              {step.status === "pending" && (
-                <span className="text-white/20 text-xs">{STEP_ICON[step.type]}</span>
-              )}
-              {step.status === "running" && (
-                <span className="w-3 h-3 rounded-full border border-purple-400/40 border-t-purple-400 animate-spin block" />
-              )}
-              {step.status === "done" && (
-                <span className="text-green-400 text-xs font-bold">✓</span>
-              )}
-              {step.status === "error" && (
-                <span className="text-red-400 text-xs">✗</span>
-              )}
-            </div>
-            <span
-              className={`text-xs leading-relaxed transition-all duration-500 ${
-                step.status === "pending"
-                  ? "text-white/30"
-                  : step.status === "running"
-                  ? "text-white/80"
-                  : step.status === "done"
-                  ? "line-through decoration-green-400/50 text-green-400/50"
-                  : "text-red-400/70"
-              }`}
-            >
-              {step.description}
-            </span>
-          </div>
-        ))}
-      </div>
+      {/* Code */}
+      <pre className="p-4 text-[13px] font-mono text-emerald-300/75 overflow-x-auto leading-relaxed whitespace-pre">
+        <code>{code.trim()}</code>
+      </pre>
     </div>
   )
 }
 
-function SummaryEmbed({ text }: { text: string }) {
-  const lines = text.split("\n").filter(Boolean)
+// ── Render message text + code blocks ────────────────────────────────────────
+
+function MessageContent({
+  content,
+  streaming,
+}: {
+  content: string
+  streaming?: boolean
+}) {
+  // Split on fenced code blocks
+  const segments = content.split(/(```(?:[a-z]*)?\n?[\s\S]*?```)/g)
+
   return (
-    <div className="space-y-2 max-w-md pt-1">
-      {lines.map((line, i) => {
-        const trimmed = line.trim()
-        if (!trimmed) return null
+    <div className="w-full min-w-0">
+      {/* Show dots while waiting for first token */}
+      {streaming && !content && (
+        <div className="flex items-center gap-1 py-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:0ms]" />
+          <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:100ms]" />
+          <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:200ms]" />
+        </div>
+      )}
 
-        const bulletMatch = trimmed.match(/^[•\-*]\s*(🟢|🟡|🔴)\s*(.+)/)
-        if (bulletMatch) {
-          const [, emoji, rest] = bulletMatch
-          const dotColor =
-            emoji === "🟢"
-              ? "bg-green-400"
-              : emoji === "🟡"
-              ? "bg-yellow-400"
-              : "bg-red-400"
-          const textColor =
-            emoji === "🟢"
-              ? "text-green-300/80"
-              : emoji === "🟡"
-              ? "text-yellow-300/80"
-              : "text-red-300/80"
+      {segments.map((seg, i) => {
+        // Code block
+        const codeMatch = seg.match(/^```([a-z]*)?\n?([\s\S]*?)```$/)
+        if (codeMatch) {
           return (
-            <div key={i} className="flex items-start gap-2.5">
-              <span className={`w-2 h-2 rounded-full ${dotColor} mt-1.5 shrink-0`} />
-              <span className={`text-sm leading-relaxed ${textColor}`}>
-                {renderMarkdown(rest)}
-              </span>
-            </div>
+            <CodeBlock
+              key={i}
+              code={codeMatch[2] ?? ""}
+              lang={codeMatch[1] || "lua"}
+            />
           )
         }
-
-        if (/what changed/i.test(trimmed)) {
-          return (
-            <p key={i} className="text-white/70 text-sm font-semibold mt-2 mb-0.5">
-              What changed:
-            </p>
-          )
-        }
-
+        // Empty
+        if (!seg.trim()) return null
+        // Plain text
+        const isLast = i === segments.length - 1
         return (
-          <p key={i} className="text-white/65 text-sm leading-relaxed">
-            {renderMarkdown(trimmed)}
+          <p
+            key={i}
+            className="text-white/70 text-sm leading-relaxed whitespace-pre-wrap break-words"
+          >
+            {seg}
+            {/* Blinking cursor on last segment while streaming */}
+            {streaming && isLast && (
+              <span className="inline-block w-[2px] h-[14px] bg-purple-400/60 animate-pulse ml-[2px] align-middle rounded-sm" />
+            )}
           </p>
         )
       })}
@@ -236,378 +128,243 @@ function SummaryEmbed({ text }: { text: string }) {
   )
 }
 
-function AssistantBubble({
-  msg,
-  onRetry,
-}: {
-  msg: AssistantMsg
-  onRetry: () => void
-}) {
-  return (
-    <div className="flex flex-col gap-4 max-w-sm">
-      {msg.phase === "thinking" ? (
-        <div className="flex items-center gap-2">
-          <ThinkingDots />
-          <span className="text-white/40 text-xs">Planning...</span>
-        </div>
-      ) : msg.thinking ? (
-        <p className="text-white/65 text-sm leading-relaxed">{msg.thinking}</p>
-      ) : null}
-
-      {msg.steps.length > 0 && <PlanEmbed steps={msg.steps} />}
-
-      {msg.phase === "error" && (
-        <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 max-w-sm">
-          <p className="text-red-400 text-sm mb-1.5">⚠ {msg.errorText}</p>
-          <button
-            onClick={onRetry}
-            className="text-red-400/50 hover:text-red-300 text-xs underline"
-          >
-            Retry
-          </button>
-        </div>
-      )}
-
-      {msg.phase === "done" && (
-        <div className="pt-1">
-          {msg.summary ? (
-            <SummaryEmbed text={msg.summary} />
-          ) : (
-            <p className="text-white/40 text-sm">Task completed.</p>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ── Main ───────────────────────────────────────────────────────────────────────
+// ── Main ChatArea ─────────────────────────────────────────────────────────────
 
 export default function ChatArea() {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [input, setInput] = useState("")
-  const [loading, setLoading] = useState(false)
-  const [selectedModel, setSelectedModel] = useState<AIModel>(MODELS[0])
+  const [messages, setMessages]             = useState<Message[]>([])
+  const [input, setInput]                   = useState("")
+  const [loading, setLoading]               = useState(false)
+  const [selectedModel, setSelectedModel]   = useState<AIModel>(MODELS[0])
   const [pluginConnected, setPluginConnected] = useState(false)
-  const [showShop, setShowShop] = useState(false)
-  const [robloxUser, setRobloxUser] = useState<RobloxUser | null>(null)
-  const [lastRequest, setLastRequest] = useState("")
-  const bottomRef = useRef<HTMLDivElement>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [showShop, setShowShop]             = useState(false)
+  const [user, setUser]                     = useState<RobloxUser | null>(null)
+  const [userCredits, setUserCredits]       = useState(0)
 
-  // Load user — server first (bypasses HttpOnly), cookie as fallback
+  const bottomRef   = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const abortRef    = useRef<AbortController | null>(null)
+
+  // ── Load user (server reads HttpOnly cookie) ──────────────────────────────
   useEffect(() => {
-    async function loadUser() {
-      const serverUser = await fetchUserFromServer()
-      if (serverUser) {
-        setRobloxUser(serverUser)
-        return
-      }
-      const cookieUser = getRobloxUserFromCookie()
-      if (cookieUser) setRobloxUser(cookieUser)
-    }
-    loadUser()
+    fetchUser().then(u => { if (u) setUser(u) })
   }, [])
 
+  // ── Credits polling ───────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!user?.id) return
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/credits?robloxId=${user.id}`)
+        if (res.ok) { const d = await res.json(); setUserCredits(d.credits ?? 0) }
+      } catch {}
+    }
+    load()
+    const id = setInterval(load, 15_000)
+    return () => clearInterval(id)
+  }, [user?.id])
+
+  // ── Plugin status polling ─────────────────────────────────────────────────
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const url = user?.id
+          ? `/api/plugin/status?robloxId=${user.id}`
+          : "/api/plugin/status"
+        const res = await fetch(url)
+        if (res.ok) { const d = await res.json(); setPluginConnected(d.connected === true) }
+      } catch {}
+    }
+    check()
+    const id = setInterval(check, 4_000)
+    return () => clearInterval(id)
+  }, [user?.id])
+
+  // ── Auto scroll ───────────────────────────────────────────────────────────
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
 
-  // Poll plugin status — also recovers robloxId if user fetch failed
+  // ── Auto resize textarea ──────────────────────────────────────────────────
   useEffect(() => {
-    async function check() {
-      try {
-        const res = await fetch("/api/plugin/status")
-        if (!res.ok) return
-        const d = await res.json()
-        setPluginConnected(d.connected === true)
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = "auto"
+    el.style.height = Math.min(el.scrollHeight, 160) + "px"
+  }, [input])
 
-        // If plugin says connected and we have its robloxId, use it as fallback user
-        if (d.connected && d.robloxId) {
-          setRobloxUser((prev) => {
-            if (prev?.id) return prev
-            return { id: String(d.robloxId), name: "Studio User" }
-          })
-        }
-      } catch {}
-    }
-    check()
-    const id = setInterval(check, 4000)
-    return () => clearInterval(id)
-  }, [])
-
-  // ── State helpers ────────────────────────────────────────────────────────────
-
-  function patchAssistant(id: string, patch: Partial<AssistantMsg>) {
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === id && m.role === "assistant"
-          ? ({ ...m, ...patch } as AssistantMsg)
-          : m
-      )
-    )
-  }
-
-  function patchStep(msgId: string, stepId: string, patch: Partial<PlanStep>) {
-    setMessages((prev) =>
-      prev.map((m) => {
-        if (m.id !== msgId || m.role !== "assistant") return m
-        const am = m as AssistantMsg
-        return {
-          ...am,
-          steps: am.steps.map((s) => (s.id === stepId ? { ...s, ...patch } : s)),
-        }
+  // ── Push code to plugin inject queue ─────────────────────────────────────
+  async function pushToPlugin(code: string) {
+    if (!pluginConnected || !user?.id || !code.trim()) return
+    try {
+      await fetch("/api/plugin/inject", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ robloxId: user.id, code }),
       })
-    )
+    } catch {}
   }
 
-  // ── Core workflow ────────────────────────────────────────────────────────────
-
-  async function runWorkflow(content: string) {
-    if (!content.trim() || loading) return
-
-    if (!pluginConnected) {
-      const id = `err-${Date.now()}`
-      setMessages((prev) => [
-        ...prev,
-        {
-          id,
-          role: "assistant",
-          thinking: "",
-          steps: [],
-          summary: "",
-          phase: "error",
-          errorText:
-            "Plugin not connected. Open Roblox Studio and click Connect on the Elixir panel.",
-        } as AssistantMsg,
-      ])
-      return
+  // Extract all lua code blocks from streamed response
+  function extractLuaBlocks(content: string): string[] {
+    const blocks: string[] = []
+    const re = /```(?:lua|luau)?\n?([\s\S]*?)```/g
+    let m
+    while ((m = re.exec(content)) !== null) {
+      if (m[1]?.trim()) blocks.push(m[1].trim())
     }
+    return blocks
+  }
 
-    // Snapshot user at time of send — won't go stale mid-workflow
-    const user = robloxUser
+  // ── Send ──────────────────────────────────────────────────────────────────
+  async function send() {
+    const content = input.trim()
+    if (!content || loading) return
 
-    if (!user?.id) {
-      const id = `err-${Date.now()}`
-      setMessages((prev) => [
-        ...prev,
-        {
-          id,
-          role: "assistant",
-          thinking: "",
-          steps: [],
-          summary: "",
-          phase: "error",
-          errorText:
-            "Not logged in. Please sign in with Roblox and refresh the page.",
-        } as AssistantMsg,
-      ])
-      return
-    }
-
-    setLoading(true)
-    setLastRequest(content)
     setInput("")
+    setLoading(true)
 
-    const userMsg: UserMsg = { id: `u-${Date.now()}`, role: "user", content }
-    setMessages((prev) => [...prev, userMsg])
+    const uMsg: Message = { id: `u-${Date.now()}`, role: "user", content }
+    const aId = `a-${Date.now()}`
+    const aMsg: Message = { id: aId, role: "assistant", content: "", streaming: true }
 
-    const aid = `a-${Date.now()}`
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: aid,
-        role: "assistant",
-        thinking: "",
-        steps: [],
-        summary: "",
-        phase: "thinking",
-      } as AssistantMsg,
-    ])
+    setMessages(prev => [...prev, uMsg, aMsg])
+
+    const estimate = estimateCreditCost(selectedModel.apiId, content)
 
     try {
-      // ── 1. Plan ────────────────────────────────────────────────────────────
-      const planRes = await fetch("/api/chat/plan", {
+      abortRef.current = new AbortController()
+
+      // Chat history (no streaming / empty messages)
+      const history = messages
+        .filter(m => !m.streaming && m.content)
+        .map(m => ({ role: m.role, content: m.content }))
+
+      const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: content,
+          messages: [...history, { role: "user", content }],
           modelId: selectedModel.apiId,
-          robloxId: user.id,
         }),
+        signal: abortRef.current.signal,
       })
 
-      if (!planRes.ok) {
-        const err = await planRes.json().catch(() => ({}))
-        throw new Error(err?.error ?? `Plan failed (${planRes.status})`)
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err?.error ?? `Error ${res.status}`)
       }
 
-      const planData = await planRes.json()
-      const thinking: string =
-        planData.thinking ?? planData.summary ?? "Here's my plan:"
-      const steps: PlanStep[] = (planData.steps ?? []).map(
-        (s: Omit<PlanStep, "status">) => ({
-          ...s,
-          status: "pending" as StepStatus,
-        })
+      // ── Parse SSE stream ─────────────────────────────────────────────────
+      const reader  = res.body!.getReader()
+      const decoder = new TextDecoder()
+      let buf  = ""
+      let full = ""
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split("\n")
+        buf = lines.pop() ?? ""
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue
+          const raw = line.slice(6).trim()
+          if (raw === "[DONE]") continue
+          try {
+            const chunk = JSON.parse(raw)?.choices?.[0]?.delta?.content ?? ""
+            if (chunk) {
+              full += chunk
+              setMessages(prev =>
+                prev.map(m => m.id === aId ? { ...m, content: full } : m)
+              )
+            }
+          } catch {}
+        }
+      }
+
+      // ── Mark complete ────────────────────────────────────────────────────
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === aId
+            ? {
+                ...m,
+                streaming: false,
+                creditsUsed: estimate.isFree ? 0 : estimate.credits,
+              }
+            : m
+        )
       )
 
-      if (steps.length === 0) throw new Error("No steps returned — try again")
+      // ── Auto-inject lua blocks to plugin ─────────────────────────────────
+      const blocks = extractLuaBlocks(full)
+      for (const block of blocks) {
+        await pushToPlugin(block)
+      }
 
-      patchAssistant(aid, { thinking, steps, phase: "executing" })
-      await sleep(300)
-
-      // ── 2. Execute each step ───────────────────────────────────────────────
-      const completed: PlanStep[] = []
-
-      for (const step of steps) {
-        patchStep(aid, step.id, { status: "running" })
-
-        // Test steps — no code to generate
-        if (step.type === "test") {
-          await sleep(1400)
-          patchStep(aid, step.id, { status: "done" })
-          completed.push({ ...step, status: "done" })
-          await sleep(200)
-          continue
-        }
-
-        // ── Real execute call ────────────────────────────────────────────────
-        let execData: any = null
-
+      // ── Refresh credits ───────────────────────────────────────────────────
+      if (!estimate.isFree && user?.id) {
         try {
-          const execRes = await fetch("/api/chat/execute", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              step,
-              message: content,           // route reads "message"
-              robloxId: user.id,          // required — pushCode needs this
-              modelId: selectedModel.apiId,
-              completedSteps: completed,
-            }),
-          })
+          const cr = await fetch(`/api/credits?robloxId=${user.id}`)
+          if (cr.ok) { const d = await cr.json(); setUserCredits(d.credits ?? 0) }
+        } catch {}
+      }
 
-          execData = await execRes.json()
-
-          if (!execRes.ok || execData?.ok === false) {
-            const errMsg =
-              execData?.error ?? `Execute failed (${execRes.status})`
-            console.error(`[Elixir] Step failed: "${step.description}" —`, errMsg)
-            patchStep(aid, step.id, { status: "error" })
-            completed.push({ ...step, status: "error" })
-            await sleep(200)
-            continue
-          }
-        } catch (networkErr) {
-          console.error("[Elixir] Execute network error:", networkErr)
-          patchStep(aid, step.id, { status: "error" })
-          completed.push({ ...step, status: "error" })
-          await sleep(200)
-          continue
-        }
-
-        // execute route already called pushCode — don't inject again
-        const code: string = execData.code ?? ""
-        const location: string = execData.location ?? step.location ?? ""
-
-        console.log(
-          `[Elixir] ✓ "${step.description}" | ${execData.lines ?? "?"}L → ${location}`
+    } catch (e: any) {
+      if (e?.name === "AbortError") {
+        // Keep whatever streamed so far — just stop
+        setMessages(prev =>
+          prev.map(m => m.id === aId ? { ...m, streaming: false } : m)
         )
-
-        await sleep(400)
-        patchStep(aid, step.id, { status: "done", code })
-        completed.push({ ...step, status: "done", code })
-        await sleep(150)
-      }
-
-      // ── 3. Summary ─────────────────────────────────────────────────────────
-      let summaryText = ""
-      try {
-        const sumRes = await fetch("/api/chat/summary", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userRequest: content,
-            completedSteps: completed,
-          }),
-        })
-        if (sumRes.ok) {
-          const sumData = await sumRes.json()
-          summaryText = sumData.summary ?? ""
-        }
-      } catch {
-        // Summary is optional — don't fail the workflow
-      }
-
-      // Fallback summary
-      if (!summaryText.trim()) {
-        const good = completed.filter(
-          (s) => s.status === "done" && s.type !== "test"
+      } else {
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === aId
+              ? {
+                  ...m,
+                  content: `⚠ ${e?.message ?? "Something went wrong."}`,
+                  streaming: false,
+                }
+              : m
+          )
         )
-        const bad = completed.filter((s) => s.status === "error")
-        summaryText = [
-          bad.length > 0
-            ? `${good.length} succeeded, ${bad.length} failed.`
-            : "Task complete.",
-          ...good.map(
-            (s) => `• 🟢 \`${s.location ?? s.description}\` — ${s.description}`
-          ),
-          ...bad.map((s) => `• 🔴 \`${s.description}\` — failed`),
-        ]
-          .filter(Boolean)
-          .join("\n")
       }
-
-      patchAssistant(aid, { summary: summaryText, phase: "done" })
-    } catch (e) {
-      console.error("[Elixir] Workflow error:", e)
-      patchAssistant(aid, {
-        phase: "error",
-        errorText:
-          e instanceof Error ? e.message : "Something went wrong.",
-      })
     } finally {
       setLoading(false)
     }
   }
 
-  function handleKey(e: React.KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault()
-      runWorkflow(input)
-    }
-  }
-
-  const suggestions = [
-    "Make a part spin",
-    "Add a leaderboard",
-    "Create a door that opens",
-    "Write a DataStore system",
+  const SUGGESTIONS = [
+    "Make a spinning part",
+    "Build a leaderboard",
+    "Add a kill brick",
+    "Create a DataStore system",
   ]
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col h-full bg-[#080808] relative">
       {showShop && <ShopModal onClose={() => setShowShop(false)} />}
 
-      {/* Background glows */}
+      {/* Ambient glows */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute top-[-10%] left-[20%] w-[700px] h-[500px] rounded-full bg-purple-600/8 blur-[130px]" />
-        <div className="absolute bottom-0 right-[10%] w-[400px] h-[300px] rounded-full bg-violet-700/6 blur-[100px]" />
+        <div className="absolute top-[-5%] left-[15%] w-[600px] h-[500px] rounded-full bg-purple-600/[0.055] blur-[130px]" />
+        <div className="absolute bottom-0 right-[5%] w-[380px] h-[280px] rounded-full bg-violet-700/[0.04] blur-[100px]" />
       </div>
 
       {/* Plugin warning */}
       {!pluginConnected && (
-        <div className="relative z-10 mx-6 mt-4 px-4 py-2.5 rounded-xl bg-yellow-500/5 border border-yellow-500/20 flex items-center gap-3">
+        <div className="relative z-10 mx-4 mt-4 px-4 py-2.5 rounded-xl bg-yellow-500/5 border border-yellow-500/20 flex items-center gap-3 shrink-0">
           <span className="text-yellow-400">⚡</span>
           <p className="text-yellow-400/70 text-xs flex-1">
-            Plugin not connected — open Roblox Studio and click Connect.
+            Plugin not connected — open Studio and click{" "}
+            <strong className="text-yellow-400/90">Connect</strong>.
           </p>
           <a
             href="/plugin"
-            className="text-yellow-400/60 hover:text-yellow-300 text-xs border border-yellow-500/20 px-2 py-1 rounded-lg transition-all shrink-0"
+            className="text-yellow-400/60 hover:text-yellow-300 text-xs border border-yellow-500/20 hover:border-yellow-500/40 px-2.5 py-1 rounded-lg transition-all whitespace-nowrap"
           >
             Get Plugin
           </a>
@@ -615,68 +372,81 @@ export default function ChatArea() {
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 py-6 relative z-10">
+      <div className="flex-1 overflow-y-auto relative z-10 px-4 py-6">
         {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full min-h-[55vh] text-center gap-5">
-            <div className="w-16 h-16 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-3xl shadow-[0_0_40px_rgba(139,92,246,0.2)]">
+
+          /* ── Empty state ── */
+          <div className="flex flex-col items-center justify-center h-full min-h-[50vh] text-center gap-5">
+            <div className="w-16 h-16 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-3xl shadow-[0_0_50px_rgba(139,92,246,0.12)]">
               🧪
             </div>
-            <div>
-              <h2 className="text-white font-semibold text-xl tracking-tight">
-                Start building your game
-              </h2>
-              <p className="text-white/30 text-sm mt-1.5 max-w-sm">
-                Elixir will plan, build, test, and inject — automatically.
+            <div className="space-y-1">
+              <h2 className="text-white font-semibold text-xl tracking-tight">Start building</h2>
+              <p className="text-white/30 text-sm max-w-xs leading-relaxed">
+                Ask Elixir to script, build, or create anything in Roblox Studio.
               </p>
             </div>
-            <div className="flex flex-wrap gap-2 justify-center">
-              {suggestions.map((s) => (
+            <div className="flex flex-wrap gap-2 justify-center max-w-sm">
+              {SUGGESTIONS.map(s => (
                 <button
                   key={s}
-                  onClick={() => runWorkflow(s)}
-                  className="text-xs text-white/35 hover:text-white/70 border border-white/[0.07] hover:border-white/20 px-4 py-2 rounded-full transition-all hover:bg-white/[0.03]"
+                  onClick={() => setInput(s)}
+                  className="text-xs text-white/30 hover:text-white/60 border border-white/[0.06] hover:border-white/15 px-3 py-2 rounded-full transition-all hover:bg-white/[0.02]"
                 >
                   {s}
                 </button>
               ))}
             </div>
           </div>
+
         ) : (
-          <div className="max-w-2xl mx-auto space-y-6 pb-4">
-            {messages.map((msg) => (
+
+          /* ── Messages ── */
+          <div className="max-w-2xl mx-auto space-y-5 pb-2">
+            {messages.map(msg => (
               <div
                 key={msg.id}
-                className={`flex gap-3 ${
-                  msg.role === "user" ? "justify-end" : "justify-start"
-                }`}
+                className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
               >
+                {/* Elixir avatar */}
                 {msg.role === "assistant" && (
-                  <div className="w-7 h-7 rounded-lg bg-purple-500/15 border border-purple-500/25 flex items-center justify-center text-sm shrink-0 mt-0.5">
+                  <div className="w-7 h-7 rounded-lg bg-purple-500/15 border border-purple-500/20 flex items-center justify-center text-[15px] shrink-0 mt-0.5">
                     🧪
                   </div>
                 )}
 
-                {msg.role === "user" ? (
-                  <div className="bg-white/[0.05] border border-white/[0.08] text-white/80 px-4 py-3 rounded-2xl rounded-tr-sm text-sm max-w-sm leading-relaxed">
-                    {(msg as UserMsg).content}
-                  </div>
-                ) : (
-                  <AssistantBubble
-                    msg={msg as AssistantMsg}
-                    onRetry={() => runWorkflow(lastRequest)}
-                  />
-                )}
+                <div
+                  className={`flex flex-col gap-1 min-w-0 max-w-[85%] ${
+                    msg.role === "user" ? "items-end" : "items-start"
+                  }`}
+                >
+                  {msg.role === "user" ? (
+                    <div className="bg-white/[0.05] border border-white/[0.07] text-white/80 px-4 py-2.5 rounded-2xl rounded-tr-sm text-sm leading-relaxed">
+                      {msg.content}
+                    </div>
+                  ) : (
+                    <MessageContent content={msg.content} streaming={msg.streaming} />
+                  )}
 
+                  {/* Credits used — only shows after stream done */}
+                  {msg.role === "assistant" && !msg.streaming && msg.creditsUsed !== undefined && (
+                    <span className="text-white/[0.17] text-[10px] mt-0.5">
+                      {msg.creditsUsed === 0
+                        ? "Free · no credits used"
+                        : `${formatCredits(msg.creditsUsed)} credits used`}
+                    </span>
+                  )}
+                </div>
+
+                {/* User pfp */}
                 {msg.role === "user" && (
-                  <div className="w-7 h-7 rounded-lg bg-white/[0.06] border border-white/10 flex items-center justify-center text-xs shrink-0 mt-0.5 overflow-hidden text-white/40 font-bold">
-                    {robloxUser?.avatarUrl ? (
-                      <img
-                        src={robloxUser.avatarUrl}
-                        alt="avatar"
-                        className="w-full h-full object-cover rounded-lg"
-                      />
+                  <div className="w-7 h-7 rounded-lg overflow-hidden shrink-0 mt-0.5 border border-white/[0.08] bg-white/[0.04] flex items-center justify-center">
+                    {user?.avatarUrl ? (
+                      <img src={user.avatarUrl} alt="pfp" className="w-full h-full object-cover" />
                     ) : (
-                      robloxUser?.name?.[0]?.toUpperCase() ?? "U"
+                      <span className="text-white/40 text-[11px] font-semibold">
+                        {user?.name?.[0]?.toUpperCase() ?? "U"}
+                      </span>
                     )}
                   </div>
                 )}
@@ -688,48 +458,75 @@ export default function ChatArea() {
       </div>
 
       {/* Input */}
-      <div className="relative z-10 px-6 pb-6 max-w-2xl mx-auto w-full">
-        <div className="relative rounded-2xl border border-white/[0.08] bg-white/[0.03] hover:border-white/[0.12] focus-within:border-purple-500/40 focus-within:shadow-[0_0_30px_rgba(139,92,246,0.08)] transition-all duration-300">
+      <div className="relative z-10 px-4 pb-5 pt-1 max-w-2xl mx-auto w-full shrink-0">
+        {/* Estimate preview — shows while typing on paid model */}
+        {input.trim() && !selectedModel.free && (
+          <p className="text-[10px] text-white/[0.18] mb-1.5 px-1">
+            ~{formatCredits(estimateCreditCost(selectedModel.apiId, input).credits)} credits estimated
+          </p>
+        )}
+
+        <div className="relative rounded-2xl border border-white/[0.08] bg-white/[0.025] hover:border-white/[0.12] focus-within:border-purple-500/35 focus-within:shadow-[0_0_25px_rgba(139,92,246,0.07)] transition-all duration-300">
           <textarea
             ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKey}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault()
+                send()
+              }
+            }}
             placeholder={
               pluginConnected
                 ? "Describe what you want to build..."
                 : "Connect the plugin in Studio first..."
             }
             rows={1}
-            className="w-full bg-transparent text-white/80 placeholder-white/20 text-sm resize-none focus:outline-none px-5 pt-4 pb-14 max-h-48 overflow-y-auto"
+            className="w-full bg-transparent text-white/80 placeholder-white/[0.18] text-sm resize-none focus:outline-none px-5 pt-4 pb-14 max-h-40 overflow-y-auto leading-relaxed"
           />
-          <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between gap-3">
+
+          <div className="absolute bottom-3 left-4 right-4 flex items-center gap-2">
+            {/* Credits button */}
             <button
               onClick={() => setShowShop(true)}
-              className="text-white/20 hover:text-purple-400/70 text-xs transition-colors border border-white/[0.06] hover:border-purple-500/20 px-2 py-1 rounded-lg"
+              className="shrink-0 flex items-center gap-1.5 text-xs text-white/[0.18] hover:text-purple-400/60 border border-white/[0.06] hover:border-purple-500/20 px-2.5 py-1 rounded-lg transition-all"
             >
-              ✦ Credits
+              <span className="text-purple-400/50">✦</span>
+              <span>{userCredits} cr</span>
             </button>
+
             <div className="flex items-center gap-2 ml-auto">
               <ModelSelector
                 value={selectedModel.id}
                 onChange={setSelectedModel}
-                userCredits={0}
+                userCredits={userCredits}
               />
-              <button
-                onClick={() => runWorkflow(input)}
-                disabled={loading || !input.trim()}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/25 hover:bg-purple-500/40 border border-purple-500/40 text-purple-200 text-xs font-medium disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-[0_0_15px_rgba(139,92,246,0.25)]"
-              >
-                {loading ? (
-                  <span className="w-3 h-3 rounded-full border border-purple-400/40 border-t-purple-400 animate-spin inline-block" />
-                ) : (
-                  "↑"
-                )}
-              </button>
+
+              {loading ? (
+                <button
+                  onClick={() => abortRef.current?.abort()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/15 border border-red-500/20 text-red-400/75 text-xs font-medium transition-all"
+                >
+                  <span className="w-2 h-2 bg-red-400/60 rounded-sm shrink-0" />
+                  Stop
+                </button>
+              ) : (
+                <button
+                  onClick={send}
+                  disabled={!input.trim()}
+                  className="px-3 py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/35 border border-purple-500/35 text-purple-200/90 text-xs font-medium disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-[0_0_12px_rgba(139,92,246,0.15)]"
+                >
+                  ↑
+                </button>
+              )}
             </div>
           </div>
         </div>
+
+        <p className="text-center text-white/[0.10] text-[10px] mt-2">
+          Elixir may make mistakes — always review code before running.
+        </p>
       </div>
     </div>
   )
