@@ -28,6 +28,11 @@ const DEV_ITEMS: NavItem[] = [
   { label: "Command", href: "/dev/command", icon: "›" },
 ]
 
+// ✅ DEV ONLY: remove this when auth is live
+const DEV_MOCK_USER = process.env.NODE_ENV === "development"
+  ? { id: "1", name: "DevUser", displayName: "Dev User", avatarUrl: "" }
+  : null
+
 type RobloxUser = {
   id: string
   name: string
@@ -40,11 +45,12 @@ export default function Sidebar() {
   const pathname = usePathname()
   const [devOpen, setDevOpen] = useState(false)
   const [user, setUser] = useState<RobloxUser | null>(null)
+  const [credits, setCredits] = useState<number>(0)  // ✅ separate credits state
   const [serverOk, setServerOk] = useState(true)
   const [pluginStatus, setPluginStatus] = useState<"connected" | "waiting" | "disconnected">("waiting")
 
+  // ── Load user from cookie (or dev mock) ────────────────────────────────
   useEffect(() => {
-    // Read cookie
     try {
       const cookies = document.cookie.split("; ")
       const match = cookies.find((r) => r.startsWith("roblox_user="))
@@ -52,15 +58,47 @@ export default function Sidebar() {
         const val = match.substring("roblox_user=".length)
         const parsed = JSON.parse(decodeURIComponent(val))
         setUser(parsed)
+        return
       }
     } catch (e) {
       console.log("Cookie parse error:", e)
     }
 
-    // Poll plugin status
+    // ✅ Fall back to dev mock if no cookie
+    if (DEV_MOCK_USER) {
+      setUser(DEV_MOCK_USER)
+    }
+  }, [])
+
+  // ── Fetch real credits from API whenever user loads ─────────────────────
+  useEffect(() => {
+    if (!user?.id) return
+
+    async function fetchCredits() {
+      try {
+        const res = await fetch(`/api/credits?robloxId=${user!.id}`)
+        if (res.ok) {
+          const data = await res.json()
+          setCredits(data.credits ?? 0)  // ✅ real balance from KV/memory
+        }
+      } catch {
+        // non-critical
+      }
+    }
+
+    fetchCredits()
+    const interval = setInterval(fetchCredits, 15000) // refresh every 15s
+    return () => clearInterval(interval)
+  }, [user?.id])
+
+  // ── Plugin status polling ───────────────────────────────────────────────
+  useEffect(() => {
     async function checkPlugin() {
       try {
-        const res = await fetch("/api/plugin/status")
+        const url = user?.id
+          ? `/api/plugin/status?robloxId=${user.id}`
+          : `/api/plugin/status`
+        const res = await fetch(url)
         if (res.ok) {
           const data = await res.json()
           setPluginStatus(data.connected ? "connected" : "waiting")
@@ -76,25 +114,7 @@ export default function Sidebar() {
     checkPlugin()
     const interval = setInterval(checkPlugin, 5000)
     return () => clearInterval(interval)
-  }, [])
-
-  // Re-poll when user loads so we can pass robloxId
-  useEffect(() => {
-    if (!user?.id) return
-    async function checkPluginWithId() {
-      try {
-        const res = await fetch(`/api/plugin/status?robloxId=${user!.id}`)
-        if (res.ok) {
-          const data = await res.json()
-          setPluginStatus(data.connected ? "connected" : "waiting")
-          setServerOk(true)
-        }
-      } catch {}
-    }
-    checkPluginWithId()
-    const interval = setInterval(checkPluginWithId, 5000)
-    return () => clearInterval(interval)
-  }, [user])
+  }, [user?.id])
 
   function NavLink({ item }: { item: NavItem }) {
     const active = pathname === item.href
@@ -210,8 +230,12 @@ export default function Sidebar() {
             }
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-white/60 text-xs font-medium truncate">{user?.displayName ?? user?.name ?? "Guest"}</p>
-            <p className="text-purple-400/60 text-[10px]">{user?.credits ?? 0} credits</p>
+            {/* ✅ Shows real name, dev fallback, or Guest */}
+            <p className="text-white/60 text-xs font-medium truncate">
+              {user?.displayName ?? user?.name ?? "Guest"}
+            </p>
+            {/* ✅ Shows real credits from KV, not cookie */}
+            <p className="text-purple-400/60 text-[10px]">{credits} credits</p>
           </div>
           <button className="text-[10px] text-purple-400/60 hover:text-purple-300 border border-purple-500/20 px-1.5 py-0.5 rounded transition-all shrink-0">
             Pro

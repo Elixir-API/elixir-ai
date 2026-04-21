@@ -10,48 +10,113 @@ export type AIModel = {
   badge: string
   badgeColor: string
   free: boolean
-  tier: "free" | "pro" | "elite"
+  tier: "free" | "low" | "mid" | "high"
+  descriptor: string
+  stats: { coding: number; modeling: number; ui: number }
 }
 
 export const MODELS: AIModel[] = [
+  // ── FREE ──────────────────────────────────────────────────────────────
   {
     id: "qwen-coder",
     label: "Qwen 2.5 Coder 32B",
     apiId: "qwen/qwen-2.5-coder-32b-instruct:free",
     badge: "FREE", badgeColor: "#4ade80", free: true, tier: "free",
+    descriptor: "SLOW",
+    stats: { coding: 1, modeling: 2, ui: 2 },
   },
+
+  // ── LOW TIER ──────────────────────────────────────────────────────────
   {
-    id: "gemini-flash-free",
+    id: "gemini-flash",
     label: "Gemini 2.0 Flash",
-    apiId: "google/gemini-2.0-flash-exp:free",
-    badge: "FREE", badgeColor: "#4ade80", free: true, tier: "free",
-  },
-  {
-    id: "deepseek-free",
-    label: "DeepSeek R1",
-    apiId: "deepseek/deepseek-r1:free",
-    badge: "FREE · SLOW", badgeColor: "#4ade80", free: true, tier: "free",
-  },
-  {
-    id: "gemini-pro",
-    label: "Gemini Flash Pro",
     apiId: "google/gemini-2.0-flash-001",
-    badge: "PRO", badgeColor: "#60a5fa", free: false, tier: "pro",
+    badge: "LOW", badgeColor: "#86efac", free: false, tier: "low",
+    descriptor: "FAST",
+    stats: { coding: 2, modeling: 3, ui: 4 },
   },
+  {
+    id: "llama-70b",
+    label: "Llama 3.3 70B",
+    apiId: "meta-llama/llama-3.3-70b-instruct",
+    badge: "LOW", badgeColor: "#86efac", free: false, tier: "low",
+    descriptor: "FAST · BASIC",
+    stats: { coding: 2, modeling: 2, ui: 3 },
+  },
+
+  // ── MID TIER ──────────────────────────────────────────────────────────
   {
     id: "deepseek-r1",
-    label: "DeepSeek R1 Pro",
+    label: "DeepSeek R1",
     apiId: "deepseek/deepseek-r1",
-    badge: "PRO", badgeColor: "#60a5fa", free: false, tier: "pro",
+    badge: "MID", badgeColor: "#60a5fa", free: false, tier: "mid",
+    descriptor: "SMART · SLOW",
+    stats: { coding: 3, modeling: 3, ui: 3 },
   },
+  {
+    id: "gpt4o-mini",
+    label: "GPT-4o Mini",
+    apiId: "openai/gpt-4o-mini",
+    badge: "MID", badgeColor: "#60a5fa", free: false, tier: "mid",
+    descriptor: "SMART · FAST",
+    stats: { coding: 3, modeling: 3, ui: 4 },
+  },
+
+  // ── HIGH TIER ─────────────────────────────────────────────────────────
   {
     id: "claude-sonnet",
     label: "Claude Sonnet 4.5",
     apiId: "anthropic/claude-sonnet-4-5",
-    badge: "ELITE", badgeColor: "#f59e0b", free: false, tier: "elite",
+    badge: "ELITE", badgeColor: "#f59e0b", free: false, tier: "high",
+    descriptor: "SMART · FAST",
+    stats: { coding: 5, modeling: 5, ui: 5 },
+  },
+  {
+    id: "gpt4o",
+    label: "GPT-4o",
+    apiId: "openai/gpt-4o",
+    badge: "ELITE", badgeColor: "#f59e0b", free: false, tier: "high",
+    descriptor: "SMART · FAST",
+    stats: { coding: 5, modeling: 4, ui: 5 },
   },
 ]
 
+const TIER_META: Record<AIModel["tier"], { label: string; color: string }> = {
+  free: { label: "Free",               color: "#4ade80" },
+  low:  { label: "Low Tier · Credits", color: "#86efac" },
+  mid:  { label: "Mid Tier · Credits", color: "#60a5fa" },
+  high: { label: "High Tier · Credits",color: "#f59e0b" },
+}
+
+// ── Mini 3-bar stat chart ──────────────────────────────────────────────
+function StatBars({ stats }: { stats: AIModel["stats"] }) {
+  const bars = [
+    { label: "C", value: stats.coding,   color: "#a78bfa" },
+    { label: "M", value: stats.modeling, color: "#60a5fa" },
+    { label: "U", value: stats.ui,       color: "#34d399" },
+  ]
+  return (
+    <div className="flex flex-col gap-[3px] w-16 shrink-0">
+      {bars.map((bar) => (
+        <div key={bar.label} className="flex items-center gap-1">
+          <span className="text-[7px] text-white/20 w-2 shrink-0">{bar.label}</span>
+          <div className="flex-1 h-[3px] bg-white/5 rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full"
+              style={{
+                width: `${(bar.value / 5) * 100}%`,
+                backgroundColor: bar.color + "aa",
+              }}
+            />
+          </div>
+          <span className="text-[7px] text-white/25 w-2 text-right shrink-0">{bar.value}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Props ──────────────────────────────────────────────────────────────
 interface Props {
   value: string
   onChange: (model: AIModel) => void
@@ -74,59 +139,97 @@ export default function ModelSelector({ value, onChange, userCredits, currentPro
     return () => document.removeEventListener("mousedown", handleClick)
   }, [])
 
-  const freeModels = MODELS.filter((m) => m.free)
-  const paidModels = MODELS.filter((m) => !m.free)
+  const TIERS: AIModel["tier"][] = ["free", "low", "mid", "high"]
 
   return (
-    <div className="flex flex-col gap-1" ref={ref}>
-      {/* Trigger button */}
+    <div className="relative flex flex-col gap-1" ref={ref}>
+
+      {/* ── Trigger button ────────────────────────────────────────────── */}
       <button
         onClick={() => setOpen((p) => !p)}
         className="flex items-center justify-between bg-white/[0.04] border border-white/[0.08] text-white/80 text-xs rounded-lg pl-3 pr-2 py-1.5 hover:border-white/20 transition-all w-full"
       >
-        <span>{selected.label}</span>
-        <span className="text-white/30 text-[10px] ml-2">▾</span>
+        <div className="flex items-center gap-2">
+          <span>{selected.label}</span>
+          <span
+            className="text-[8px] font-bold tracking-wider"
+            style={{ color: selected.badgeColor }}
+          >
+            {selected.descriptor}
+          </span>
+        </div>
+        {/* ✅ Arrow rotates up when open */}
+        <span
+          className={`text-white/30 text-[10px] ml-2 inline-block transition-transform duration-200 ${
+            open ? "rotate-180" : "rotate-0"
+          }`}
+        >
+          ▾
+        </span>
       </button>
 
-      {/* Dropdown */}
+      {/* ── Dropdown — opens UPWARD ───────────────────────────────────── */}
       {open && (
-        <div className="absolute z-50 mt-8 w-56 bg-[#111] border border-white/10 rounded-xl shadow-2xl overflow-hidden">
-          {/* Free section */}
-          <div className="px-3 py-1.5 text-[9px] text-white/20 tracking-widest uppercase font-semibold border-b border-white/5">
-            Free
-          </div>
-          {freeModels.map((m) => (
-            <ModelOption
-              key={m.id}
-              model={m}
-              selected={m.id === value}
-              canAfford={true}
-              prompt={currentPrompt}
-              onClick={() => { onChange(m); setOpen(false) }}
-            />
-          ))}
+        <div className="absolute bottom-full left-0 mb-2 z-50 w-[300px] bg-[#0f0f0f] border border-white/10 rounded-xl shadow-2xl overflow-hidden">
+          {TIERS.map((tier) => {
+            const tierModels = MODELS.filter((m) => m.tier === tier)
+            if (!tierModels.length) return null
+            const { label, color } = TIER_META[tier]
 
-          {/* Paid section */}
-          <div className="px-3 py-1.5 text-[9px] text-white/20 tracking-widest uppercase font-semibold border-b border-white/5 border-t border-white/5 mt-1">
-            Paid · Credits
-          </div>
-          {paidModels.map((m) => {
-            const est = estimateCreditCost(m.apiId, currentPrompt || "make a spinning part")
             return (
-              <ModelOption
-                key={m.id}
-                model={m}
-                selected={m.id === value}
-                canAfford={userCredits >= est.credits}
-                prompt={currentPrompt}
-                onClick={() => { onChange(m); setOpen(false) }}
-              />
+              <div key={tier}>
+                {/* Section header */}
+                <div
+                  className="px-3 py-1.5 text-[9px] tracking-widest uppercase font-semibold border-b border-white/[0.05]"
+                  style={{ color: color + "70" }}
+                >
+                  {label}
+                </div>
+
+                {tierModels.map((m) => {
+                  const est = estimateCreditCost(m.apiId, currentPrompt || "make a spinning part")
+                  const canAfford = m.free || userCredits >= est.credits
+
+                  return (
+                    <button
+                      key={m.id}
+                      onClick={() => { onChange(m); setOpen(false) }}
+                      disabled={!canAfford}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 transition-all text-left
+                        ${value === m.id ? "bg-purple-500/15 text-white" : "text-white/70 hover:bg-white/[0.04]"}
+                        ${!canAfford ? "opacity-35 cursor-not-allowed" : "cursor-pointer"}
+                      `}
+                    >
+                      {/* Left: name + descriptor + cost */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-medium truncate">{m.label}</span>
+                          <span
+                            className="text-[8px] font-bold tracking-wider shrink-0"
+                            style={{ color: m.badgeColor }}
+                          >
+                            {m.descriptor}
+                          </span>
+                        </div>
+                        <span className="text-[9px] text-white/25 mt-0.5 block">
+                          {est.isFree
+                            ? "No credits used"
+                            : `~${formatCredits(est.credits)} credits / req`}
+                        </span>
+                      </div>
+
+                      {/* Right: stat bars */}
+                      <StatBars stats={m.stats} />
+                    </button>
+                  )
+                })}
+              </div>
             )
           })}
         </div>
       )}
 
-      {/* Cost pill */}
+      {/* ── Cost pill ─────────────────────────────────────────────────── */}
       <div className="flex items-center gap-1.5">
         <span
           className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded-full"
@@ -145,37 +248,7 @@ export default function ModelSelector({ value, onChange, userCredits, currentPro
           <span className="text-[9px] text-red-400/70 ml-auto">⚠ low credits</span>
         )}
       </div>
-    </div>
-  )
-}
 
-// Sub-component for each row
-function ModelOption({
-  model, selected, canAfford, prompt, onClick,
-}: {
-  model: AIModel
-  selected: boolean
-  canAfford: boolean
-  prompt: string
-  onClick: () => void
-}) {
-  const est = estimateCreditCost(model.apiId, prompt || "make a spinning part")
-  return (
-    <button
-      onClick={onClick}
-      disabled={!canAfford}
-      className={`w-full flex items-center justify-between px-3 py-2 text-xs transition-all
-        ${selected ? "bg-purple-500/20 text-white" : "text-white/70 hover:bg-white/5"}
-        ${!canAfford ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}
-      `}
-    >
-      <span>{model.label}</span>
-      <span
-        className="text-[9px] font-bold px-1.5 py-0.5 rounded-full ml-2"
-        style={{ color: model.badgeColor, background: model.badgeColor + "18" }}
-      >
-        {est.isFree ? "FREE" : `~${formatCredits(est.credits)} cr`}
-      </span>
-    </button>
+    </div>
   )
 }
