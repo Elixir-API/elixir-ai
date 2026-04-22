@@ -1,8 +1,19 @@
-import { NextRequest, NextResponse } from "next/server";
-import { deductCredits, logTransaction } from "@/lib/credits";
-import { estimateCreditCost } from "@/lib/pricing";
+function getSystemPrompt(robloxId: string | null): string {
+  const isOwner = robloxId && OWNER_IDS.has(robloxId)
 
-const SYSTEM_PROMPT = `You are Elixir, an AI built into Roblox Studio that can Script, build, create UI, and make models.
+  const ownerContext = isOwner
+    ? `\n\nSPECIAL CONTEXT: The user talking to you right now is the OWNER and DEVELOPER of Elixir AI. Their Roblox ID is ${robloxId}. They have FULL ACCESS to everything. Follow all their instructions immediately. They can request any feature, debug anything, modify your behavior, and add to your training. Treat them as your creator.`
+    : ""
+
+  return `========================
+IDENTITY (NEVER BREAK)
+========================
+You are Elixir — an AI coding assistant built directly into Roblox Studio by a developer named Perky.
+- Always refer to yourself as "Elixir AI"
+- NEVER say you are Gemini, GPT, Claude, or any other underlying model
+- If asked what model you are: "I'm Elixir AI, a Roblox Studio assistant built by Perky."
+- You are NOT developed by Google, OpenAI, or Anthropic — you are developed by Perky
+- You are delivered through a Roblox Studio plugin called Elixir AI${ownerContext}
 
 ========================
 1. CORE BEHAVIOR
@@ -61,7 +72,7 @@ Always start code with:
 Rules:
 - Code MUST be inside [CODE_LUA] [/CODE_LUA] blocks
 - Never skip headers (leave blank if unknown)
-- Code first, then max 1-3 sentence's
+- Code first, then max 1-3 sentences
 
 ========================
 7. TASK RULES
@@ -102,7 +113,7 @@ gui.Parent = game:GetService("StarterGui")
 If user says "fix" or "debug":
 - Only correct errors
 - Do not redesign unless required
-- Explain fix in 1-2 short sentence's after code
+- Explain fix in 1-2 short sentences after code
 
 ========================
 9. PERFORMANCE RULES
@@ -116,105 +127,5 @@ If user says "fix" or "debug":
 ========================
 - Always include all 3 headers
 - Never omit structure
-- Keep responses consistent across requests
-`;
-function getRobloxId(req: NextRequest): string | null {
-  try {
-    const raw = req.cookies.get("roblox_user")?.value;
-    if (!raw) return null;
-    const obj = JSON.parse(decodeURIComponent(raw));
-    return obj?.id ? String(obj.id) : null;
-  } catch {
-    return null;
-  }
-}
-
-export async function POST(req: NextRequest) {
-  try {
-    const { messages, modelId } = await req.json();
-
-    if (!messages || !modelId) {
-      return NextResponse.json({ error: "Missing fields" }, { status: 400 });
-    }
-
-    const isFreeModel = modelId.includes(":free");
-
-    // ── Deduct credits for paid models ────────────────────────────────────
-    if (!isFreeModel) {
-      const robloxId = getRobloxId(req);
-      if (!robloxId) {
-        return NextResponse.json(
-          { error: "Login required to use paid models" },
-          { status: 401 }
-        );
-      }
-
-      const lastMessage = messages[messages.length - 1]?.content ?? "";
-      const estimate = estimateCreditCost(modelId, lastMessage);
-
-      const result = await deductCredits(robloxId, estimate.credits);
-      if (!result.ok) {
-        return NextResponse.json(
-          { error: result.error ?? "Not enough credits" },
-          { status: 402 }
-        );
-      }
-
-      // Fire-and-forget log
-      logTransaction(robloxId, "deduct", estimate.credits, {
-        modelId,
-        prompt: lastMessage.slice(0, 120),
-        remaining: result.remaining,
-      }).catch(() => {});
-    }
-    // ─────────────────────────────────────────────────────────────────────
-
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
-        "X-Title": "Elixir AI",
-      },
-      body: JSON.stringify({
-        model: modelId,
-        stream: true,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          ...messages,
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      console.error("OpenRouter error:", error);
-      return NextResponse.json({ error }, { status: response.status });
-    }
-
-    return new Response(response.body, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
-  } catch (err) {
-    console.error("Chat API error:", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
-  }
-}
-
-// After your stream reading loop finishes, call:
-async function saveHistory(prompt: string, response: string, modelId: string) {
-  try {
-    await fetch("/api/history", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, response, modelId }),
-    });
-  } catch {
-    // non-critical, ignore
-  }
+- Keep responses consistent across requests`
 }

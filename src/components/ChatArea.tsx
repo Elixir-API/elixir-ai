@@ -81,8 +81,16 @@ function MessageContent({
   content: string
   streaming?: boolean
 }) {
-  // Split on fenced code blocks
-  const segments = content.split(/(```(?:[a-z]*)?\n?[\s\S]*?```)/g)
+  // Strip injection headers + convert [CODE_LUA] tags before display
+  const clean = content
+    .replace(/\[CODE_LUA\]/g, "```lua")
+    .replace(/\[\/CODE_LUA\]/g, "```")
+    .replace(/^--\s*Folder:[^\n]*\n?/gm, "")
+    .replace(/^--\s*Type:[^\n]*\n?/gm, "")
+    .replace(/^--\s*Place:[^\n]*\n?/gm, "")
+    .trim()
+
+  const segments = clean.split(/(```(?:[a-z]*)?\n?[\s\S]*?```)/g)
 
   return (
     <div className="w-full min-w-0">
@@ -131,20 +139,20 @@ function MessageContent({
 // ── Main ChatArea ─────────────────────────────────────────────────────────────
 
 export default function ChatArea() {
-  const [messages, setMessages]             = useState<Message[]>([])
-  const [input, setInput]                   = useState("")
-  const [loading, setLoading]               = useState(false)
-  const [selectedModel, setSelectedModel]   = useState<AIModel>(MODELS[0])
+  const [messages, setMessages]               = useState<Message[]>([])
+  const [input, setInput]                     = useState("")
+  const [loading, setLoading]                 = useState(false)
+  const [selectedModel, setSelectedModel]     = useState<AIModel>(MODELS[0])
   const [pluginConnected, setPluginConnected] = useState(false)
-  const [showShop, setShowShop]             = useState(false)
-  const [user, setUser]                     = useState<RobloxUser | null>(null)
-  const [userCredits, setUserCredits]       = useState(0)
+  const [showShop, setShowShop]               = useState(false)
+  const [user, setUser]                       = useState<RobloxUser | null>(null)
+  const [userCredits, setUserCredits]         = useState(0)
 
   const bottomRef   = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const abortRef    = useRef<AbortController | null>(null)
 
-  // ── Load user (server reads HttpOnly cookie) ──────────────────────────────
+  // ── Load user ─────────────────────────────────────────────────────────────
   useEffect(() => {
     fetchUser().then(u => { if (u) setUser(u) })
   }, [])
@@ -204,7 +212,7 @@ export default function ChatArea() {
     } catch {}
   }
 
-  // Extract all lua code blocks from streamed response
+  // ── Extract lua blocks from response ─────────────────────────────────────
   function extractLuaBlocks(content: string): string[] {
     const blocks: string[] = []
     const re = /```(?:lua|luau)?\n?([\s\S]*?)```/g
@@ -234,7 +242,6 @@ export default function ChatArea() {
     try {
       abortRef.current = new AbortController()
 
-      // Chat history (no streaming / empty messages)
       const history = messages
         .filter(m => !m.streaming && m.content)
         .map(m => ({ role: m.role, content: m.content }))
@@ -288,16 +295,12 @@ export default function ChatArea() {
       setMessages(prev =>
         prev.map(m =>
           m.id === aId
-            ? {
-                ...m,
-                streaming: false,
-                creditsUsed: estimate.isFree ? 0 : estimate.credits,
-              }
+            ? { ...m, streaming: false, creditsUsed: estimate.isFree ? 0 : estimate.credits }
             : m
         )
       )
 
-      // ── Auto-inject lua blocks to plugin ─────────────────────────────────
+      // ── Auto-inject lua blocks ────────────────────────────────────────────
       const blocks = extractLuaBlocks(full)
       for (const block of blocks) {
         await pushToPlugin(block)
@@ -313,7 +316,6 @@ export default function ChatArea() {
 
     } catch (e: any) {
       if (e?.name === "AbortError") {
-        // Keep whatever streamed so far — just stop
         setMessages(prev =>
           prev.map(m => m.id === aId ? { ...m, streaming: false } : m)
         )
@@ -321,11 +323,7 @@ export default function ChatArea() {
         setMessages(prev =>
           prev.map(m =>
             m.id === aId
-              ? {
-                  ...m,
-                  content: `⚠ ${e?.message ?? "Something went wrong."}`,
-                  streaming: false,
-                }
+              ? { ...m, content: `⚠ ${e?.message ?? "Something went wrong."}`, streaming: false }
               : m
           )
         )
@@ -415,11 +413,7 @@ export default function ChatArea() {
                   </div>
                 )}
 
-                <div
-                  className={`flex flex-col gap-1 min-w-0 max-w-[85%] ${
-                    msg.role === "user" ? "items-end" : "items-start"
-                  }`}
-                >
+                <div className={`flex flex-col gap-1 min-w-0 max-w-[85%] ${msg.role === "user" ? "items-end" : "items-start"}`}>
                   {msg.role === "user" ? (
                     <div className="bg-white/[0.05] border border-white/[0.07] text-white/80 px-4 py-2.5 rounded-2xl rounded-tr-sm text-sm leading-relaxed">
                       {msg.content}
@@ -428,7 +422,7 @@ export default function ChatArea() {
                     <MessageContent content={msg.content} streaming={msg.streaming} />
                   )}
 
-                  {/* Credits used — only shows after stream done */}
+                  {/* Credits used */}
                   {msg.role === "assistant" && !msg.streaming && msg.creditsUsed !== undefined && (
                     <span className="text-white/[0.17] text-[10px] mt-0.5">
                       {msg.creditsUsed === 0
@@ -459,7 +453,7 @@ export default function ChatArea() {
 
       {/* Input */}
       <div className="relative z-10 px-4 pb-5 pt-1 max-w-2xl mx-auto w-full shrink-0">
-        {/* Estimate preview — shows while typing on paid model */}
+        {/* Estimate preview */}
         {input.trim() && !selectedModel.free && (
           <p className="text-[10px] text-white/[0.18] mb-1.5 px-1">
             ~{formatCredits(estimateCreditCost(selectedModel.apiId, input).credits)} credits estimated
