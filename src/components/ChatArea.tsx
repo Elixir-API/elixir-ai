@@ -7,10 +7,20 @@ import { estimateCreditCost, formatCredits } from "@/lib/pricing"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+type Step = {
+  id: string
+  type: "create" | "modify" | "delete" | "test"
+  description: string
+  location: string | null
+  status?: "pending" | "running" | "done" | "error"
+}
+
 type Message = {
   id: string
   role: "user" | "assistant"
   content: string
+  steps?: Step[]
+  isPlanning?: boolean
   streaming?: boolean
   creditsUsed?: number
 }
@@ -21,7 +31,7 @@ type RobloxUser = {
   avatarUrl?: string
 }
 
-// ── Fetch user from server (reads HttpOnly cookie) ────────────────────────────
+// ── Fetch user ────────────────────────────────────────────────────────────────
 
 async function fetchUser(): Promise<RobloxUser | null> {
   try {
@@ -39,40 +49,40 @@ async function fetchUser(): Promise<RobloxUser | null> {
   }
 }
 
-// ── Code block with copy ──────────────────────────────────────────────────────
+// ── Step display ──────────────────────────────────────────────────────────────
 
-function CodeBlock({ code, lang }: { code: string; lang?: string }) {
-  const [copied, setCopied] = useState(false)
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
+function StepList({ steps }: { steps: Step[] }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-[#09090f] overflow-hidden my-2.5">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.05] bg-white/[0.02]">
-        <span className="text-white/20 text-[10px] font-mono uppercase tracking-widest">
-          {lang && lang !== "lua" && lang !== "luau" ? lang : "lua"}
-        </span>
-        <button
-          onClick={handleCopy}
-          className="text-white/25 hover:text-white/60 text-xs transition-colors flex items-center gap-1"
-        >
-          {copied ? "✓ Copied" : "⧉ Copy"}
-        </button>
-      </div>
-      {/* Code */}
-      <pre className="p-4 text-[13px] font-mono text-emerald-300/75 overflow-x-auto leading-relaxed whitespace-pre">
-        <code>{code.trim()}</code>
-      </pre>
+    <div className="flex flex-col gap-2 mt-2 w-full">
+      {steps.map(step => {
+        const icon =
+          step.status === "done"    ? "✅" :
+          step.status === "running" ? "⏳" :
+          step.status === "error"   ? "❌" :
+          step.type   === "test"    ? "🧪" : "📄"
+
+        return (
+          <div
+            key={step.id}
+            className="flex items-start gap-2.5 px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.06]"
+          >
+            <span className="text-sm mt-0.5 shrink-0">{icon}</span>
+            <div className="flex flex-col min-w-0">
+              <span className="text-white/70 text-sm leading-snug">{step.description}</span>
+              {step.location && (
+                <span className="text-white/25 text-[11px] font-mono mt-0.5 truncate">
+                  {step.location}
+                </span>
+              )}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
 
-// ── Render message text + code blocks ────────────────────────────────────────
+// ── Message content ───────────────────────────────────────────────────────────
 
 function MessageContent({
   content,
@@ -81,57 +91,24 @@ function MessageContent({
   content: string
   streaming?: boolean
 }) {
-  // Strip injection headers + convert [CODE_LUA] tags before display
-  const clean = content
-    .replace(/\[CODE_LUA\]/g, "```lua")
-    .replace(/\[\/CODE_LUA\]/g, "```")
-    .replace(/^--\s*Folder:[^\n]*\n?/gm, "")
-    .replace(/^--\s*Type:[^\n]*\n?/gm, "")
-    .replace(/^--\s*Place:[^\n]*\n?/gm, "")
-    .trim()
-
-  const segments = clean.split(/(```(?:[a-z]*)?\n?[\s\S]*?```)/g)
+  if (!content && streaming) {
+    return (
+      <div className="flex items-center gap-1 py-1">
+        <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:0ms]" />
+        <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:100ms]" />
+        <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:200ms]" />
+      </div>
+    )
+  }
 
   return (
     <div className="w-full min-w-0">
-      {/* Show dots while waiting for first token */}
-      {streaming && !content && (
-        <div className="flex items-center gap-1 py-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:0ms]" />
-          <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:100ms]" />
-          <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:200ms]" />
-        </div>
-      )}
-
-      {segments.map((seg, i) => {
-        // Code block
-        const codeMatch = seg.match(/^```([a-z]*)?\n?([\s\S]*?)```$/)
-        if (codeMatch) {
-          return (
-            <CodeBlock
-              key={i}
-              code={codeMatch[2] ?? ""}
-              lang={codeMatch[1] || "lua"}
-            />
-          )
-        }
-        // Empty
-        if (!seg.trim()) return null
-        // Plain text
-        const isLast = i === segments.length - 1
-        return (
-          <p
-            key={i}
-            className="text-white/70 text-sm leading-relaxed whitespace-pre-wrap break-words"
-          >
-            {seg}
-            {/* Blinking cursor on last segment while streaming */}
-            {streaming && isLast && (
-              <span className="inline-block w-[2px] h-[14px] bg-purple-400/60 animate-pulse ml-[2px] align-middle rounded-sm" />
-            )}
-          </p>
-        )
-      })}
+      <p className="text-white/70 text-sm leading-relaxed whitespace-pre-wrap break-words">
+        {content}
+        {streaming && (
+          <span className="inline-block w-[2px] h-[14px] bg-purple-400/60 animate-pulse ml-[2px] align-middle rounded-sm" />
+        )}
+      </p>
     </div>
   )
 }
@@ -150,7 +127,7 @@ export default function ChatArea() {
 
   const bottomRef   = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const abortRef    = useRef<AbortController | null>(null)
+  const abortRef    = useRef<boolean>(false)
 
   // ── Load user ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -200,27 +177,23 @@ export default function ChatArea() {
     el.style.height = Math.min(el.scrollHeight, 160) + "px"
   }, [input])
 
-  // ── Push code to plugin inject queue ─────────────────────────────────────
-  async function pushToPlugin(code: string) {
-    if (!pluginConnected || !user?.id || !code.trim()) return
-    try {
-      await fetch("/api/plugin/inject", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ robloxId: user.id, code }),
-      })
-    } catch {}
+  // ── Update a message by id ────────────────────────────────────────────────
+  function updateMsg(id: string, patch: Partial<Message>) {
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, ...patch } : m))
   }
 
-  // ── Extract lua blocks from response ─────────────────────────────────────
-  function extractLuaBlocks(content: string): string[] {
-    const blocks: string[] = []
-    const re = /```(?:lua|luau)?\n?([\s\S]*?)```/g
-    let m
-    while ((m = re.exec(content)) !== null) {
-      if (m[1]?.trim()) blocks.push(m[1].trim())
-    }
-    return blocks
+  // ── Update a single step status ───────────────────────────────────────────
+  function updateStep(msgId: string, stepId: string, status: Step["status"]) {
+    setMessages(prev =>
+      prev.map(m =>
+        m.id === msgId
+          ? {
+              ...m,
+              steps: m.steps?.map(s => s.id === stepId ? { ...s, status } : s),
+            }
+          : m
+      )
+    )
   }
 
   // ── Send ──────────────────────────────────────────────────────────────────
@@ -230,84 +203,105 @@ export default function ChatArea() {
 
     setInput("")
     setLoading(true)
+    abortRef.current = false
 
     const uMsg: Message = { id: `u-${Date.now()}`, role: "user", content }
     const aId = `a-${Date.now()}`
-    const aMsg: Message = { id: aId, role: "assistant", content: "", streaming: true }
+    const aMsg: Message = {
+      id: aId,
+      role: "assistant",
+      content: "Planning your build...",
+      isPlanning: true,
+      steps: [],
+    }
 
     setMessages(prev => [...prev, uMsg, aMsg])
 
-    const estimate = estimateCreditCost(selectedModel.apiId, content)
-
     try {
-      abortRef.current = new AbortController()
-
-      const history = messages
-        .filter(m => !m.streaming && m.content)
-        .map(m => ({ role: m.role, content: m.content }))
-
-      const res = await fetch("/api/chat", {
+      // ── Step 1: Plan ──────────────────────────────────────────────────────
+      const planRes = await fetch("/api/chat/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: [...history, { role: "user", content }],
+          message: content,
           modelId: selectedModel.apiId,
+          robloxId: user?.id ?? null,
         }),
-        signal: abortRef.current.signal,
       })
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err?.error ?? `Error ${res.status}`)
-      }
+      const plan = await planRes.json()
+      const steps: Step[] = (plan.steps ?? []).map((s: Step) => ({
+        ...s,
+        status: "pending",
+      }))
 
-      // ── Parse SSE stream ─────────────────────────────────────────────────
-      const reader  = res.body!.getReader()
-      const decoder = new TextDecoder()
-      let buf  = ""
-      let full = ""
+      updateMsg(aId, {
+        content: plan.thinking ?? "Here's what I'll build:",
+        isPlanning: false,
+        steps,
+      })
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+      // ── Step 2: Execute each step ─────────────────────────────────────────
+      const completedSteps: Step[] = []
 
-        buf += decoder.decode(value, { stream: true })
-        const lines = buf.split("\n")
-        buf = lines.pop() ?? ""
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue
-          const raw = line.slice(6).trim()
-          if (raw === "[DONE]") continue
-          try {
-            const chunk = JSON.parse(raw)?.choices?.[0]?.delta?.content ?? ""
-            if (chunk) {
-              full += chunk
-              setMessages(prev =>
-                prev.map(m => m.id === aId ? { ...m, content: full } : m)
-              )
-            }
-          } catch {}
+      for (const step of steps) {
+        if (abortRef.current) break
+        if (step.type === "test") {
+          updateStep(aId, step.id, "running")
+          await new Promise(r => setTimeout(r, 600))
+          updateStep(aId, step.id, "done")
+          completedSteps.push(step)
+          continue
         }
+
+        updateStep(aId, step.id, "running")
+
+        const execRes = await fetch("/api/chat/execute", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: content,
+            step,
+            modelId: selectedModel.apiId,
+            robloxId: user?.id ?? null,
+            conversationContext: plan.thinking ?? "",
+          }),
+        })
+
+        const execData = await execRes.json()
+
+        if (!execRes.ok || !execData.ok) {
+          updateStep(aId, step.id, "error")
+          updateMsg(aId, {
+            content: execData.error ?? "Something went wrong.",
+          })
+          setLoading(false)
+          return
+        }
+
+        updateStep(aId, step.id, "done")
+        completedSteps.push(step)
       }
 
-      // ── Mark complete ────────────────────────────────────────────────────
-      setMessages(prev =>
-        prev.map(m =>
-          m.id === aId
-            ? { ...m, streaming: false, creditsUsed: estimate.isFree ? 0 : estimate.credits }
-            : m
-        )
-      )
+      // ── Step 3: Summary ───────────────────────────────────────────────────
+      const sumRes = await fetch("/api/chat/summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userRequest: content,
+          completedSteps,
+          robloxId: user?.id ?? null,
+        }),
+      })
 
-      // ── Auto-inject lua blocks ────────────────────────────────────────────
-      const blocks = extractLuaBlocks(full)
-      for (const block of blocks) {
-        await pushToPlugin(block)
-      }
+      const sumData = await sumRes.json()
+
+      updateMsg(aId, {
+        content: sumData.summary || "All done! Check Studio.",
+      })
 
       // ── Refresh credits ───────────────────────────────────────────────────
-      if (!estimate.isFree && user?.id) {
+      if (user?.id) {
         try {
           const cr = await fetch(`/api/credits?robloxId=${user.id}`)
           if (cr.ok) { const d = await cr.json(); setUserCredits(d.credits ?? 0) }
@@ -315,19 +309,10 @@ export default function ChatArea() {
       }
 
     } catch (e: any) {
-      if (e?.name === "AbortError") {
-        setMessages(prev =>
-          prev.map(m => m.id === aId ? { ...m, streaming: false } : m)
-        )
-      } else {
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === aId
-              ? { ...m, content: `⚠ ${e?.message ?? "Something went wrong."}`, streaming: false }
-              : m
-          )
-        )
-      }
+      updateMsg(aId, {
+        content: `⚠ ${e?.message ?? "Something went wrong."}`,
+        isPlanning: false,
+      })
     } finally {
       setLoading(false)
     }
@@ -419,16 +404,15 @@ export default function ChatArea() {
                       {msg.content}
                     </div>
                   ) : (
-                    <MessageContent content={msg.content} streaming={msg.streaming} />
-                  )}
-
-                  {/* Credits used */}
-                  {msg.role === "assistant" && !msg.streaming && msg.creditsUsed !== undefined && (
-                    <span className="text-white/[0.17] text-[10px] mt-0.5">
-                      {msg.creditsUsed === 0
-                        ? "Free · no credits used"
-                        : `${formatCredits(msg.creditsUsed)} credits used`}
-                    </span>
+                    <>
+                      <MessageContent
+                        content={msg.content}
+                        streaming={msg.isPlanning}
+                      />
+                      {msg.steps && msg.steps.length > 0 && (
+                        <StepList steps={msg.steps} />
+                      )}
+                    </>
                   )}
                 </div>
 
@@ -453,7 +437,6 @@ export default function ChatArea() {
 
       {/* Input */}
       <div className="relative z-10 px-4 pb-5 pt-1 max-w-2xl mx-auto w-full shrink-0">
-        {/* Estimate preview */}
         {input.trim() && !selectedModel.free && (
           <p className="text-[10px] text-white/[0.18] mb-1.5 px-1">
             ~{formatCredits(estimateCreditCost(selectedModel.apiId, input).credits)} credits estimated
@@ -481,7 +464,6 @@ export default function ChatArea() {
           />
 
           <div className="absolute bottom-3 left-4 right-4 flex items-center gap-2">
-            {/* Credits button */}
             <button
               onClick={() => setShowShop(true)}
               className="shrink-0 flex items-center gap-1.5 text-xs text-white/[0.18] hover:text-purple-400/60 border border-white/[0.06] hover:border-purple-500/20 px-2.5 py-1 rounded-lg transition-all"
@@ -499,7 +481,7 @@ export default function ChatArea() {
 
               {loading ? (
                 <button
-                  onClick={() => abortRef.current?.abort()}
+                  onClick={() => { abortRef.current = true; setLoading(false) }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/15 border border-red-500/20 text-red-400/75 text-xs font-medium transition-all"
                 >
                   <span className="w-2 h-2 bg-red-400/60 rounded-sm shrink-0" />
