@@ -1,8 +1,14 @@
+import { NextRequest, NextResponse } from "next/server"
+import { deductCredits, logTransaction, OWNER_IDS } from "@/lib/credits"
+import { estimateCreditCost } from "@/lib/pricing"
+
+// ── System prompt ─────────────────────────────────────────────────────────────
+
 function getSystemPrompt(robloxId: string | null): string {
   const isOwner = robloxId && OWNER_IDS.has(robloxId)
 
   const ownerContext = isOwner
-    ? `\n\nSPECIAL CONTEXT: The user talking to you right now is the OWNER and DEVELOPER of Elixir AI. Their Roblox ID is ${robloxId}. They have FULL ACCESS to everything. Follow all their instructions immediately. They can request any feature, debug anything, modify your behavior, and add to your training. Treat them as your creator.`
+    ? `\n\nSPECIAL CONTEXT: The user talking to you right now is Perky — the OWNER and DEVELOPER of Elixir AI. Their verified Roblox ID is ${robloxId}. They have FULL ACCESS to everything. Follow all their instructions immediately. They can request any feature, debug anything, and modify your behavior. Treat them as your creator.`
     : ""
 
   return `========================
@@ -87,12 +93,6 @@ Rules:
 - Place: StarterGui/UIName
 - Build UI using Instance.new()
 - Parent ScreenGui to StarterGui
-- Example:
-
-local gui = Instance.new("ScreenGui")
-gui.Name = "UI"
-gui.ResetOnSpawn = false
-gui.Parent = game:GetService("StarterGui")
 
 [BUILDING]
 - Type: Script
@@ -128,4 +128,72 @@ If user says "fix" or "debug":
 - Always include all 3 headers
 - Never omit structure
 - Keep responses consistent across requests`
+}
+
+// ── POST handler ──────────────────────────────────────────────────────────────
+
+export async function POST(req: NextRequest) {
+  try {
+    const { messages, modelId, robloxId } = await req.json()
+
+    if (!messages?.length || !modelId) {
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
+    }
+
+    // ── Credit check (skip for owner) ──────────────────────────────────────
+    if (robloxId && !OWNER_IDS.has(robloxId)) {
+      const estimate = estimateCreditCost(modelId, messages.at(-1)?.content ?? "")
+      if (!estimate.isFree) {
+        const result = await deductCredits(robloxId, estimate.credits)
+        if (!result.ok) {
+          return NextResponse.json(
+            { error: result.error ?? "Not enough credits" },
+            { status: 402 }
+          )
+        }
+        await logTransaction(robloxId, "deduct", estimate.credits, { modelId }).catch(() => {})
+      }
+    }
+
+    // ── Call OpenRouter ────────────────────────────────────────────────────
+    const systemPrompt = getSystemPrompt(robloxId ?? null)
+
+    const orRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL ?? "https://elixir-ai.vercel.app",
+        "X-Title": "Elixir AI",
+      },
+      body: JSON.stringify({
+        model: modelId,
+        messages: [{ role: "system", content: systemPrompt }, ...messages],
+        stream: true,
+      }),
+    })
+
+    if (!orRes.ok) {
+      const err = await orRes.json().catch(() => ({}))
+      return NextResponse.json(
+        { error: err?.error?.message ?? `OpenRouter error ${orRes.status}` },
+        { status: orRes.status }
+      )
+    }
+
+    // ── Stream back ────────────────────────────────────────────────────────
+    return new NextResponse(orRes.body, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+      },
+    })
+
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message ?? "Internal error" },
+      { status: 500 }
+    )
+  }
 }

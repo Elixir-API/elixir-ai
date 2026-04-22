@@ -1,8 +1,8 @@
 // src/app/api/chat/execute/route.ts
 import { NextRequest, NextResponse } from "next/server"
 import { pushCode, isConnected } from "@/lib/inject-store"
-import { calculateExactCreditCost } from "@/lib/pricing"
-import { deductCredits, logTransaction } from "@/lib/credits"
+import { estimateCreditCost } from "@/lib/pricing"
+import { deductCredits, logTransaction, OWNER_IDS } from "@/lib/credits"
 
 const SYSTEM = `You are Elixir — an expert Roblox Studio Lua engineer. You write production-quality code that works immediately.
 
@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    const model    = modelId    ?? "qwen/qwen-2.5-coder-32b-instruct:free"
+    const model    = modelId ?? "openai/gpt-4o-mini"
     const location = step?.location ?? "ServerScriptService/ElixirScript"
 
     const userPrompt = [
@@ -75,6 +75,32 @@ export async function POST(req: NextRequest) {
     ]
       .filter(Boolean)
       .join("\n\n")
+
+    // ── Credit check (skip for owner) ─────────────────────────────────────────
+    const isOwner = OWNER_IDS.has(String(robloxId))
+
+    if (!isOwner) {
+      const estimate = estimateCreditCost(model, userPrompt)
+      if (!estimate.isFree) {
+        const deductResult = await deductCredits(String(robloxId), estimate.credits)
+        if (!deductResult.ok) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: deductResult.error ?? "Not enough credits — visit the shop to top up",
+              creditsNeeded: estimate.credits,
+              creditsBalance: deductResult.remaining,
+            },
+            { status: 402 }
+          )
+        }
+        await logTransaction(String(robloxId), "deduct", estimate.credits, {
+          model,
+          step: step?.description ?? "unknown",
+          remaining: deductResult.remaining,
+        }).catch(() => {})
+      }
+    }
 
     // ── Call OpenRouter ───────────────────────────────────────────────────────
     const aiRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -90,8 +116,6 @@ export async function POST(req: NextRequest) {
         stream: false,
         max_tokens: 4096,
         temperature: 0.1,
-        // Tell OpenRouter to include token usage in response
-        usage: true,
         messages: [
           { role: "system", content: SYSTEM },
           { role: "user",   content: userPrompt },
@@ -121,55 +145,6 @@ export async function POST(req: NextRequest) {
       code = `-- Type: Script\n-- Name: ${name}\n-- Place: ${location}\n${code}`
     }
 
-    // ── Smart credit charging — uses REAL token counts from OpenRouter ────────
-    const usage = aiData.usage as
-      | { prompt_tokens: number; completion_tokens: number }
-      | undefined
-
-    if (usage) {
-      const { credits, usdCostToUs, usdUserPays, profitUsd } =
-        calculateExactCreditCost(model, usage.prompt_tokens, usage.completion_tokens)
-
-      // Only charge if model is not free (calculateExactCreditCost returns 0 for free)
-      if (credits > 0) {
-        const deductResult = await deductCredits(String(robloxId), credits)
-
-        if (!deductResult.ok) {
-          return NextResponse.json(
-            {
-              ok: false,
-              error: deductResult.error ?? "Not enough credits — visit the shop to top up",
-              creditsNeeded: credits,
-              creditsBalance: deductResult.remaining,
-            },
-            { status: 402 } // 402 Payment Required
-          )
-        }
-
-        // Log every transaction so you can see your revenue
-        await logTransaction(String(robloxId), "deduct", credits, {
-          model,
-          step: step?.description ?? "unknown",
-          promptTokens:     usage.prompt_tokens,
-          completionTokens: usage.completion_tokens,
-          usdCostToUs:      usdCostToUs.toFixed(6),
-          usdUserPays:      usdUserPays.toFixed(6),
-          profitUsd:        profitUsd.toFixed(6),
-          remaining:        deductResult.remaining,
-        })
-
-        console.log(
-          `[Credits] ${robloxId}` +
-          ` | -${credits.toFixed(2)}cr` +
-          ` | tokens: ${usage.prompt_tokens}in + ${usage.completion_tokens}out` +
-          ` | cost us $${usdCostToUs.toFixed(5)}` +
-          ` | user paid $${usdUserPays.toFixed(5)}` +
-          ` | profit $${profitUsd.toFixed(5)}` +
-          ` | bal: ${deductResult.remaining.toFixed(2)}cr`
-        )
-      }
-    }
-
     // ── Push to plugin queue ──────────────────────────────────────────────────
     pushCode(String(robloxId), code)
 
@@ -180,7 +155,8 @@ export async function POST(req: NextRequest) {
       ` | user: ${robloxId}` +
       ` | model: ${model}` +
       ` | step: "${step?.description}"` +
-      ` | lines: ${lines}`
+      ` | lines: ${lines}` +
+      (isOwner ? " | OWNER (free)" : "")
     )
 
     return NextResponse.json({
@@ -191,14 +167,8 @@ export async function POST(req: NextRequest) {
       result:   `Sent to Studio: ${step?.description ?? "script"}`,
       chars:    code.length,
       model,
-      // Return token usage so frontend can show it
-      usage: usage
-        ? {
-            promptTokens:     usage.prompt_tokens,
-            completionTokens: usage.completion_tokens,
-          }
-        : null,
     })
+
   } catch (e: any) {
     console.error("[Elixir] Execute error:", e)
     return NextResponse.json(
