@@ -15,12 +15,15 @@ type Step = {
   status?: "pending" | "running" | "done" | "error"
 }
 
+type Phase = "planning" | "executing" | "finalizing" | "injected" | "done"
+
 type Message = {
   id: string
   role: "user" | "assistant"
   content: string
   steps?: Step[]
-  phase?: "planning" | "executing" | "finalizing" | "done"
+  phase?: Phase
+  imageDataUrl?: string
 }
 
 type RobloxUser = {
@@ -28,6 +31,16 @@ type RobloxUser = {
   name: string
   avatarUrl?: string
 }
+
+type UIStyle = "minimal" | "modern" | "sleek" | "cartoony" | "neon"
+
+const UI_STYLES: { id: UIStyle; label: string }[] = [
+  { id: "minimal",  label: "Minimal"  },
+  { id: "modern",   label: "Modern"   },
+  { id: "sleek",    label: "Sleek"    },
+  { id: "cartoony", label: "Cartoony" },
+  { id: "neon",     label: "Neon"     },
+]
 
 // ── Fetch user ────────────────────────────────────────────────────────────────
 
@@ -37,22 +50,14 @@ async function fetchUser(): Promise<RobloxUser | null> {
     if (!res.ok) return null
     const d = await res.json()
     if (!d.loggedIn) return null
-    return {
-      id: String(d.user.id),
-      name: d.user.name ?? "User",
-      avatarUrl: d.user.avatarUrl ?? undefined,
-    }
-  } catch {
-    return null
-  }
+    return { id: String(d.user.id), name: d.user.name ?? "User", avatarUrl: d.user.avatarUrl ?? undefined }
+  } catch { return null }
 }
 
 // ── Spinner ───────────────────────────────────────────────────────────────────
 
 function Spinner() {
-  return (
-    <span className="w-3.5 h-3.5 border-2 border-purple-400/20 border-t-purple-400 rounded-full animate-spin block shrink-0" />
-  )
+  return <span className="w-3 h-3 border-[1.5px] border-purple-400/20 border-t-purple-400 rounded-full animate-spin block shrink-0" />
 }
 
 // ── Step item ─────────────────────────────────────────────────────────────────
@@ -63,12 +68,12 @@ function StepItem({ step }: { step: Step }) {
   const isError   = step.status === "error"
 
   return (
-    <div className="flex items-center gap-3 px-3.5 py-2.5 border-b border-white/[0.04] last:border-0">
-      {/* Left indicator */}
+    <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/[0.04] last:border-0">
+      {/* Indicator */}
       <div className="w-4 h-4 flex items-center justify-center shrink-0">
-        {isDone    && <span className="text-emerald-400 text-sm font-bold">✓</span>}
+        {isDone    && <span className="text-emerald-400 text-sm font-bold leading-none">✓</span>}
         {isRunning && <Spinner />}
-        {isError   && <span className="text-red-400 text-sm">✗</span>}
+        {isError   && <span className="text-red-400 text-sm leading-none">✗</span>}
         {!isDone && !isRunning && !isError && (
           <span className="w-1.5 h-1.5 rounded-full bg-white/[0.12] block" />
         )}
@@ -76,94 +81,118 @@ function StepItem({ step }: { step: Step }) {
 
       {/* Text */}
       <div className="flex flex-col min-w-0 flex-1">
-        <span className={`text-sm leading-snug transition-all duration-300 ${
-          isDone
-            ? "line-through text-white/25"
-            : isRunning
-            ? "text-white/80"
-            : "text-white/35"
+        <span className={`text-sm leading-snug transition-all duration-500 ${
+          isDone    ? "line-through text-white/20" :
+          isRunning ? "text-white/85" :
+                      "text-white/30"
         }`}>
           {step.description}
         </span>
         {step.location && !isDone && (
-          <span className="text-white/15 text-[10px] font-mono mt-0.5 truncate">
-            {step.location}
-          </span>
+          <span className="text-white/15 text-[10px] font-mono mt-0.5 truncate">{step.location}</span>
         )}
       </div>
     </div>
   )
 }
 
-// ── Step card (embedded block) ────────────────────────────────────────────────
+// ── Steps card (embedded block) ───────────────────────────────────────────────
 
 function StepCard({ steps }: { steps: Step[] }) {
   return (
-    <div className="w-full rounded-xl border border-white/[0.07] bg-white/[0.02] overflow-hidden mt-2">
-      {steps.map(step => (
-        <StepItem key={step.id} step={step} />
+    <div className="w-full rounded-xl border border-white/[0.07] bg-white/[0.025] overflow-hidden">
+      {steps.map(s => <StepItem key={s.id} step={s} />)}
+    </div>
+  )
+}
+
+// ── Summary block ─────────────────────────────────────────────────────────────
+
+function SummaryBlock({ text }: { text: string }) {
+  const lines = text
+    .split("\n")
+    .map(l => l.replace(/^\*+\s*/, "").replace(/[🟢🟡🔵⚫🟠]/g, "").trim())
+    .filter(Boolean)
+
+  return (
+    <div className="flex flex-col gap-1 pt-1">
+      {lines.map((line, i) => (
+        <p key={i} className="text-white/50 text-sm leading-relaxed">{line}</p>
       ))}
     </div>
   )
 }
 
-// ── Message content ───────────────────────────────────────────────────────────
+// ── Assistant message renderer ────────────────────────────────────────────────
 
-function MessageContent({ content, phase }: { content: string; phase?: Message["phase"] }) {
-  if (phase === "planning" && !content) {
-    return (
-      <div className="flex items-center gap-1.5 py-1">
-        <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:0ms]" />
-        <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:100ms]" />
-        <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:200ms]" />
-      </div>
-    )
-  }
-
-  if (phase === "finalizing") {
-    return (
-      <div className="flex items-center gap-2 text-white/50 text-sm">
-        <Spinner />
-        <span>{content}</span>
-      </div>
-    )
-  }
-
-  if (phase === "done" && content.startsWith("Injected")) {
-    return (
-      <p className="text-emerald-400/80 text-sm font-medium">{content}</p>
-    )
-  }
+function AssistantMessage({ msg }: { msg: Message }) {
+  const { phase, content, steps } = msg
 
   return (
-    <p className="text-white/70 text-sm leading-relaxed whitespace-pre-wrap break-words">
-      {content}
-    </p>
+    <div className="w-full flex flex-col gap-2">
+
+      {/* Thinking text (only during executing) */}
+      {phase === "executing" && content && (
+        <p className="text-white/55 text-sm leading-relaxed">{content}</p>
+      )}
+
+      {/* Planning dots */}
+      {phase === "planning" && (
+        <div className="flex items-center gap-1.5 py-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:0ms]" />
+          <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:100ms]" />
+          <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:200ms]" />
+        </div>
+      )}
+
+      {/* Steps card */}
+      {steps && steps.length > 0 && phase !== "planning" && (
+        <StepCard steps={steps} />
+      )}
+
+      {/* Finalizing */}
+      {phase === "finalizing" && (
+        <div className="flex items-center gap-2 text-white/35 text-xs mt-1">
+          <Spinner />
+          <span>Finalizing...</span>
+        </div>
+      )}
+
+      {/* Injected */}
+      {phase === "injected" && (
+        <p className="text-emerald-400/80 text-xs font-medium mt-1">Injected into Studio ✓</p>
+      )}
+
+      {/* Summary (replaces injected text) */}
+      {phase === "done" && content && (
+        <SummaryBlock text={content} />
+      )}
+    </div>
   )
 }
 
 // ── Main ChatArea ─────────────────────────────────────────────────────────────
 
 export default function ChatArea() {
-  const [messages, setMessages]               = useState<Message[]>([])
-  const [input, setInput]                     = useState("")
-  const [loading, setLoading]                 = useState(false)
-  const [selectedModel, setSelectedModel]     = useState<AIModel>(MODELS[0])
+  const [messages, setMessages]           = useState<Message[]>([])
+  const [input, setInput]                 = useState("")
+  const [loading, setLoading]             = useState(false)
+  const [selectedModel, setSelectedModel] = useState<AIModel>(MODELS[0])
   const [pluginConnected, setPluginConnected] = useState(false)
-  const [showShop, setShowShop]               = useState(false)
-  const [user, setUser]                       = useState<RobloxUser | null>(null)
-  const [userCredits, setUserCredits]         = useState(0)
+  const [showShop, setShowShop]           = useState(false)
+  const [user, setUser]                   = useState<RobloxUser | null>(null)
+  const [userCredits, setUserCredits]     = useState(0)
+  const [uiStyle, setUIStyle]             = useState<UIStyle>("modern")
+  const [attachedImage, setAttachedImage] = useState<string | null>(null)
 
   const bottomRef   = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const abortRef    = useRef(false)
 
   // ── Load user ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    fetchUser().then(u => { if (u) setUser(u) })
-  }, [])
+  useEffect(() => { fetchUser().then(u => { if (u) setUser(u) }) }, [])
 
-  // ── Credits polling ───────────────────────────────────────────────────────
+  // ── Credits ───────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!user?.id) return
     const load = async () => {
@@ -177,13 +206,11 @@ export default function ChatArea() {
     return () => clearInterval(id)
   }, [user?.id])
 
-  // ── Plugin status polling ─────────────────────────────────────────────────
+  // ── Plugin status ─────────────────────────────────────────────────────────
   useEffect(() => {
     const check = async () => {
       try {
-        const url = user?.id
-          ? `/api/plugin/status?robloxId=${user.id}`
-          : "/api/plugin/status"
+        const url = user?.id ? `/api/plugin/status?robloxId=${user.id}` : "/api/plugin/status"
         const res = await fetch(url)
         if (res.ok) { const d = await res.json(); setPluginConnected(d.connected === true) }
       } catch {}
@@ -194,17 +221,35 @@ export default function ChatArea() {
   }, [user?.id])
 
   // ── Auto scroll ───────────────────────────────────────────────────────────
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages])
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }) }, [messages])
 
-  // ── Auto resize textarea ──────────────────────────────────────────────────
+  // ── Auto resize ───────────────────────────────────────────────────────────
   useEffect(() => {
     const el = textareaRef.current
     if (!el) return
     el.style.height = "auto"
     el.style.height = Math.min(el.scrollHeight, 160) + "px"
   }, [input])
+
+  // ── Image paste ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    const onPaste = (e: ClipboardEvent) => {
+      const img = Array.from(e.clipboardData?.items ?? []).find(i => i.type.startsWith("image/"))
+      if (!img) return
+      e.preventDefault()
+      const file = img.getAsFile()
+      if (!file) return
+      const reader = new FileReader()
+      reader.onload = ev => {
+        if (typeof ev.target?.result === "string") setAttachedImage(ev.target.result)
+      }
+      reader.readAsDataURL(file)
+    }
+    el.addEventListener("paste", onPaste)
+    return () => el.removeEventListener("paste", onPaste)
+  }, [])
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function updateMsg(id: string, patch: Partial<Message>) {
@@ -221,12 +266,20 @@ export default function ChatArea() {
     )
   }
 
-  // ── Build conversation context for AI memory ──────────────────────────────
-  function buildContext(): string {
-    return messages
-      .filter(m => m.content && m.phase === "done" || m.role === "user")
-      .slice(-6) // last 6 messages for context
-      .map(m => `${m.role === "user" ? "User" : "Elixir"}: ${m.content}`)
+  // Build clean context string from previous messages
+  function buildContext(msgs: Message[]): string {
+    return msgs
+      .filter(m => m.role === "user" || m.phase === "done")
+      .slice(-10)
+      .map(m => {
+        const text = m.content
+          .replace(/^\*+\s*/gm, "")
+          .replace(/[🟢🟡⚫🔵🟠]/g, "")
+          .replace(/`/g, "")
+          .slice(0, 300)
+          .trim()
+        return `${m.role === "user" ? "User" : "Elixir"}: ${text}`
+      })
       .join("\n")
   }
 
@@ -235,24 +288,21 @@ export default function ChatArea() {
     const content = input.trim()
     if (!content || loading) return
 
+    const imageToSend  = attachedImage
+    const contextSnap  = buildContext(messages) // snapshot BEFORE adding new msgs
     setInput("")
+    setAttachedImage(null)
     setLoading(true)
     abortRef.current = false
 
-    const uMsg: Message = { id: `u-${Date.now()}`, role: "user", content }
+    const uMsg: Message = { id: `u-${Date.now()}`, role: "user", content, imageDataUrl: imageToSend ?? undefined }
     const aId = `a-${Date.now()}`
-    const aMsg: Message = {
-      id: aId,
-      role: "assistant",
-      content: "",
-      phase: "planning",
-      steps: [],
-    }
+    const aMsg: Message = { id: aId, role: "assistant", content: "", phase: "planning", steps: [] }
 
     setMessages(prev => [...prev, uMsg, aMsg])
 
     try {
-      // ── 1. Plan ───────────────────────────────────────────────────────────
+      // ── 1. Plan ────────────────────────────────────────────────────────────
       const planRes = await fetch("/api/chat/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -260,23 +310,17 @@ export default function ChatArea() {
           message: content,
           modelId: selectedModel.apiId,
           robloxId: user?.id ?? null,
-          conversationContext: buildContext(),
+          conversationContext: contextSnap,
+          hasImage: !!imageToSend,
         }),
       })
 
-      const plan = await planRes.json()
-      const steps: Step[] = (plan.steps ?? []).map((s: Step) => ({
-        ...s,
-        status: "pending" as const,
-      }))
+      const plan  = await planRes.json()
+      const steps: Step[] = (plan.steps ?? []).map((s: Step) => ({ ...s, status: "pending" as const }))
 
-      updateMsg(aId, {
-        content: plan.thinking ?? "Here's what I'll build:",
-        phase: "executing",
-        steps,
-      })
+      updateMsg(aId, { content: plan.thinking ?? "Here's what I'll build:", phase: "executing", steps })
 
-      // ── 2. Execute each step ──────────────────────────────────────────────
+      // ── 2. Execute each step ───────────────────────────────────────────────
       const completedSteps: Step[] = []
 
       for (const step of steps) {
@@ -285,7 +329,7 @@ export default function ChatArea() {
         updateStep(aId, step.id, "running")
 
         if (step.type === "test") {
-          await new Promise(r => setTimeout(r, 800))
+          await new Promise(r => setTimeout(r, 700))
           updateStep(aId, step.id, "done")
           completedSteps.push(step)
           continue
@@ -300,6 +344,8 @@ export default function ChatArea() {
             modelId: selectedModel.apiId,
             robloxId: user?.id ?? null,
             conversationContext: plan.thinking ?? "",
+            uiStyle,
+            imageDataUrl: imageToSend ?? null,
           }),
         })
 
@@ -307,47 +353,32 @@ export default function ChatArea() {
 
         if (!execRes.ok || !execData.ok) {
           updateStep(aId, step.id, "error")
-          updateMsg(aId, {
-            content: execData.error ?? "Something went wrong.",
-            phase: "done",
-          })
+          updateMsg(aId, { content: execData.error ?? "Something went wrong.", phase: "done" })
           setLoading(false)
           return
         }
 
         updateStep(aId, step.id, "done")
         completedSteps.push(step)
-
-        // Small pause so user can see the checkmark animate
         await new Promise(r => setTimeout(r, 300))
       }
 
-      // ── 3. Finalizing ─────────────────────────────────────────────────────
-      updateMsg(aId, { content: "Finalizing...", phase: "finalizing" })
+      // ── 3. Finalizing → Injected ───────────────────────────────────────────
+      updateMsg(aId, { phase: "finalizing" })
       await new Promise(r => setTimeout(r, 900))
+      updateMsg(aId, { phase: "injected" })
+      await new Promise(r => setTimeout(r, 800))
 
-      updateMsg(aId, { content: "Injected! ✓", phase: "done" })
-      await new Promise(r => setTimeout(r, 700))
-
-      // ── 4. Summary ────────────────────────────────────────────────────────
-      const sumRes = await fetch("/api/chat/summary", {
+      // ── 4. Summary ─────────────────────────────────────────────────────────
+      const sumRes  = await fetch("/api/chat/summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userRequest: content,
-          completedSteps,
-          robloxId: user?.id ?? null,
-        }),
+        body: JSON.stringify({ userRequest: content, completedSteps, robloxId: user?.id ?? null }),
       })
-
       const sumData = await sumRes.json()
 
-      updateMsg(aId, {
-        content: sumData.summary || "All done! Check Studio.",
-        phase: "done",
-      })
+      updateMsg(aId, { content: sumData.summary || "All done! Check Studio.", phase: "done" })
 
-      // ── Refresh credits ───────────────────────────────────────────────────
       if (user?.id) {
         try {
           const cr = await fetch(`/api/credits?robloxId=${user.id}`)
@@ -356,29 +387,19 @@ export default function ChatArea() {
       }
 
     } catch (e: any) {
-      updateMsg(aId, {
-        content: `⚠ ${e?.message ?? "Something went wrong."}`,
-        phase: "done",
-      })
+      updateMsg(aId, { content: `⚠ ${e?.message ?? "Something went wrong."}`, phase: "done" })
     } finally {
       setLoading(false)
     }
   }
 
-  const SUGGESTIONS = [
-    "Make a spinning part",
-    "Build a leaderboard",
-    "Add a kill brick",
-    "Create a DataStore system",
-  ]
+  const SUGGESTIONS = ["Make a spinning part", "Build a leaderboard", "Add a kill brick", "Create a DataStore system"]
 
   // ── Render ────────────────────────────────────────────────────────────────
-
   return (
     <div className="flex flex-col h-full bg-[#080808] relative">
       {showShop && <ShopModal onClose={() => setShowShop(false)} />}
 
-      {/* Ambient glows */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute top-[-5%] left-[15%] w-[600px] h-[500px] rounded-full bg-purple-600/[0.055] blur-[130px]" />
         <div className="absolute bottom-0 right-[5%] w-[380px] h-[280px] rounded-full bg-violet-700/[0.04] blur-[100px]" />
@@ -389,13 +410,9 @@ export default function ChatArea() {
         <div className="relative z-10 mx-4 mt-4 px-4 py-2.5 rounded-xl bg-yellow-500/5 border border-yellow-500/20 flex items-center gap-3 shrink-0">
           <span className="text-yellow-400">⚡</span>
           <p className="text-yellow-400/70 text-xs flex-1">
-            Plugin not connected — open Studio and click{" "}
-            <strong className="text-yellow-400/90">Connect</strong>.
+            Plugin not connected — open Studio and click <strong className="text-yellow-400/90">Connect</strong>.
           </p>
-          <a
-            href="/plugin"
-            className="text-yellow-400/60 hover:text-yellow-300 text-xs border border-yellow-500/20 hover:border-yellow-500/40 px-2.5 py-1 rounded-lg transition-all whitespace-nowrap"
-          >
+          <a href="/plugin" className="text-yellow-400/60 hover:text-yellow-300 text-xs border border-yellow-500/20 hover:border-yellow-500/40 px-2.5 py-1 rounded-lg transition-all whitespace-nowrap">
             Get Plugin
           </a>
         </div>
@@ -416,11 +433,8 @@ export default function ChatArea() {
             </div>
             <div className="flex flex-wrap gap-2 justify-center max-w-sm">
               {SUGGESTIONS.map(s => (
-                <button
-                  key={s}
-                  onClick={() => setInput(s)}
-                  className="text-xs text-white/30 hover:text-white/60 border border-white/[0.06] hover:border-white/15 px-3 py-2 rounded-full transition-all hover:bg-white/[0.02]"
-                >
+                <button key={s} onClick={() => setInput(s)}
+                  className="text-xs text-white/30 hover:text-white/60 border border-white/[0.06] hover:border-white/15 px-3 py-2 rounded-full transition-all hover:bg-white/[0.02]">
                   {s}
                 </button>
               ))}
@@ -429,48 +443,37 @@ export default function ChatArea() {
         ) : (
           <div className="max-w-2xl mx-auto space-y-5 pb-2">
             {messages.map(msg => (
-              <div
-                key={msg.id}
-                className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-              >
-                {/* Elixir avatar */}
+              <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+
                 {msg.role === "assistant" && (
                   <div className="w-7 h-7 rounded-lg bg-purple-500/15 border border-purple-500/20 flex items-center justify-center text-[15px] shrink-0 mt-0.5">
                     🧪
                   </div>
                 )}
 
-                <div className={`flex flex-col gap-1 min-w-0 max-w-[85%] ${msg.role === "user" ? "items-end" : "items-start w-full"}`}>
+                <div className={`flex flex-col gap-1 min-w-0 ${
+                  msg.role === "user" ? "items-end max-w-[80%]" : "items-start w-full max-w-[92%]"
+                }`}>
                   {msg.role === "user" ? (
-                    <div className="bg-white/[0.05] border border-white/[0.07] text-white/80 px-4 py-2.5 rounded-2xl rounded-tr-sm text-sm leading-relaxed">
-                      {msg.content}
+                    <div className="flex flex-col gap-2 items-end">
+                      {msg.imageDataUrl && (
+                        <img src={msg.imageDataUrl} alt="ref" className="max-w-[180px] max-h-[130px] rounded-xl border border-white/10 object-cover" />
+                      )}
+                      <div className="bg-white/[0.05] border border-white/[0.07] text-white/80 px-4 py-2.5 rounded-2xl rounded-tr-sm text-sm leading-relaxed">
+                        {msg.content}
+                      </div>
                     </div>
                   ) : (
-                    <>
-                      {/* Steps card first */}
-                      {msg.steps && msg.steps.length > 0 && (
-                        <StepCard steps={msg.steps} />
-                      )}
-                      {/* Then status/summary below */}
-                      {msg.content && (
-                        <div className="mt-2 w-full">
-                          <MessageContent content={msg.content} phase={msg.phase} />
-                        </div>
-                      )}
-                    </>
+                    <AssistantMessage msg={msg} />
                   )}
                 </div>
 
-                {/* User pfp */}
                 {msg.role === "user" && (
                   <div className="w-7 h-7 rounded-lg overflow-hidden shrink-0 mt-0.5 border border-white/[0.08] bg-white/[0.04] flex items-center justify-center">
-                    {user?.avatarUrl ? (
-                      <img src={user.avatarUrl} alt="pfp" className="w-full h-full object-cover" />
-                    ) : (
-                      <span className="text-white/40 text-[11px] font-semibold">
-                        {user?.name?.[0]?.toUpperCase() ?? "U"}
-                      </span>
-                    )}
+                    {user?.avatarUrl
+                      ? <img src={user.avatarUrl} alt="pfp" className="w-full h-full object-cover" />
+                      : <span className="text-white/40 text-[11px] font-semibold">{user?.name?.[0]?.toUpperCase() ?? "U"}</span>
+                    }
                   </div>
                 )}
               </div>
@@ -482,6 +485,33 @@ export default function ChatArea() {
 
       {/* Input */}
       <div className="relative z-10 px-4 pb-5 pt-1 max-w-2xl mx-auto w-full shrink-0">
+
+        {/* UI Style selector */}
+        <div className="flex items-center gap-1.5 mb-2 px-0.5">
+          <span className="text-white/15 text-[9px] uppercase tracking-widest">Style</span>
+          {UI_STYLES.map(s => (
+            <button key={s.id} onClick={() => setUIStyle(s.id)}
+              className={`text-[10px] px-2.5 py-0.5 rounded-full border transition-all ${
+                uiStyle === s.id
+                  ? "border-purple-500/40 bg-purple-500/15 text-purple-300/80"
+                  : "border-white/[0.06] text-white/25 hover:text-white/50 hover:border-white/15"
+              }`}>
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Attached image preview */}
+        {attachedImage && (
+          <div className="relative inline-block mb-2 ml-0.5">
+            <img src={attachedImage} alt="attached" className="h-12 rounded-lg border border-white/10 object-cover" />
+            <button onClick={() => setAttachedImage(null)}
+              className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-white/10 hover:bg-red-500/60 text-white/60 text-[9px] flex items-center justify-center transition-all">
+              ✕
+            </button>
+          </div>
+        )}
+
         {input.trim() && !selectedModel.free && (
           <p className="text-[10px] text-white/[0.18] mb-1.5 px-1">
             ~{formatCredits(estimateCreditCost(selectedModel.apiId, input).credits)} credits estimated
@@ -493,51 +523,31 @@ export default function ChatArea() {
             ref={textareaRef}
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault()
-                send()
-              }
-            }}
-            placeholder={
-              pluginConnected
-                ? "Describe what you want to build..."
-                : "Connect the plugin in Studio first..."
-            }
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }}
+            placeholder={pluginConnected ? "Describe what to build... (paste images too)" : "Connect the plugin in Studio first..."}
             rows={1}
             className="w-full bg-transparent text-white/80 placeholder-white/[0.18] text-sm resize-none focus:outline-none px-5 pt-4 pb-14 max-h-40 overflow-y-auto leading-relaxed"
           />
 
           <div className="absolute bottom-3 left-4 right-4 flex items-center gap-2">
-            <button
-              onClick={() => setShowShop(true)}
-              className="shrink-0 flex items-center gap-1.5 text-xs text-white/[0.18] hover:text-purple-400/60 border border-white/[0.06] hover:border-purple-500/20 px-2.5 py-1 rounded-lg transition-all"
-            >
+            <button onClick={() => setShowShop(true)}
+              className="shrink-0 flex items-center gap-1.5 text-xs text-white/[0.18] hover:text-purple-400/60 border border-white/[0.06] hover:border-purple-500/20 px-2.5 py-1 rounded-lg transition-all">
               <span className="text-purple-400/50">✦</span>
               <span>{userCredits} cr</span>
             </button>
 
             <div className="flex items-center gap-2 ml-auto">
-              <ModelSelector
-                value={selectedModel.id}
-                onChange={setSelectedModel}
-                userCredits={userCredits}
-              />
+              <ModelSelector value={selectedModel.id} onChange={setSelectedModel} userCredits={userCredits} />
 
               {loading ? (
-                <button
-                  onClick={() => { abortRef.current = true; setLoading(false) }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/15 border border-red-500/20 text-red-400/75 text-xs font-medium transition-all"
-                >
+                <button onClick={() => { abortRef.current = true; setLoading(false) }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/15 border border-red-500/20 text-red-400/75 text-xs font-medium transition-all">
                   <span className="w-2 h-2 bg-red-400/60 rounded-sm shrink-0" />
                   Stop
                 </button>
               ) : (
-                <button
-                  onClick={send}
-                  disabled={!input.trim()}
-                  className="px-3 py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/35 border border-purple-500/35 text-purple-200/90 text-xs font-medium disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-[0_0_12px_rgba(139,92,246,0.15)]"
-                >
+                <button onClick={send} disabled={!input.trim()}
+                  className="px-3 py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/35 border border-purple-500/35 text-purple-200/90 text-xs font-medium disabled:opacity-25 disabled:cursor-not-allowed transition-all shadow-[0_0_12px_rgba(139,92,246,0.15)]">
                   ↑
                 </button>
               )}

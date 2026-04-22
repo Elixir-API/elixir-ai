@@ -1,4 +1,3 @@
-// src/app/api/chat/plan/route.ts
 import { NextRequest, NextResponse } from "next/server"
 
 const PLAN_PROMPT = `You are Elixir, an AI for Roblox Studio. Given a request output ONLY valid JSON. No markdown. No explanation. No text outside the JSON.
@@ -8,7 +7,7 @@ Rules:
 - HIGH LEVEL steps only: "Create Script", "Create Part", "Modify Script"
 - Final step is ALWAYS type "test"
 - Types: create | modify | delete | test
-- Use conversation context to understand follow-up requests
+- Use conversation context to understand follow-up requests and remember what was already built
 
 Format:
 {"thinking":"one sentence","steps":[{"id":"1","type":"create","description":"Create spinning script","location":"ServerScriptService/SpinScript"},{"id":"2","type":"test","description":"Run error check","location":null}]}`
@@ -22,7 +21,7 @@ function extractJSON(raw: string): object | null {
   const idx = raw.indexOf("{")
   const lastIdx = raw.lastIndexOf("}")
   if (idx !== -1 && lastIdx > idx) {
-    try { return JSON.parse(raw.slice(idx, lastIdx + 1)) } catch {}
+    try { return JSON.parse(raw.slice(idx, lastIdx + 1)) } catch {} 
   }
   return null
 }
@@ -30,14 +29,19 @@ function extractJSON(raw: string): object | null {
 export async function POST(req: NextRequest) {
   let message = ""
   try {
-    const body = await req.json()
-    message                        = body.message            ?? ""
-    const modelId                  = body.modelId            ?? "google/gemini-2.0-flash-001"
-    const conversationContext      = body.conversationContext ?? ""
+    const body                    = await req.json()
+    message                       = body.message            ?? ""
+    const modelId                 = body.modelId            ?? "google/gemini-2.0-flash-001"
+    const conversationContext     = body.conversationContext ?? ""   // ← was missing
+    const hasImage                = body.hasImage           ?? false
 
-    const userContent = conversationContext
-      ? `${conversationContext}\n\nNew request: ${message}`
-      : message
+    let userContent = message
+    if (conversationContext) {
+      userContent = `Previous conversation:\n${conversationContext}\n\nNew request: ${message}`
+    }
+    if (hasImage) {
+      userContent += "\n[User attached a reference image for this request]"
+    }
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -70,18 +74,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       thinking: "I'll build this for you.",
       steps: [
-        {
-          id: "1",
-          type: "create",
-          description: `Build: ${message.slice(0, 40)}`,
-          location: "ServerScriptService/ElixirScript",
-        },
-        {
-          id: "2",
-          type: "test",
-          description: "Run error check",
-          location: null,
-        },
+        { id: "1", type: "create", description: `Build: ${message.slice(0, 40)}`, location: "ServerScriptService/ElixirScript" },
+        { id: "2", type: "test",   description: "Run error check",                location: null },
       ],
     })
   }
