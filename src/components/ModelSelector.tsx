@@ -19,19 +19,20 @@ export type AIModel = {
 
 export const MODELS: AIModel[] = [
   // ── FREE ──────────────────────────────────────────────────────────────────
-  {
-    id: "qwen-coder",
-    name: "Qwen 2.5 Coder 32B",
-    provider: "qwen",
-    apiId: "qwen/qwen-2.5-coder-32b-instruct:free",
-    tier: "free",
-    speed: "SLOW",
-    badge: "FREE",
-    creditCostPerMsg: "Free",
-    simpleTasks: 4,
-    complexTasks: 3,
-    free: true,
-  },
+// ── FREE ──────────────────────────────────────────────────────────────────
+{
+  id:              "gemma-2-9b",
+  name:            "Gemma 2 9B",
+  provider:        "google",
+  apiId:           "google/gemma-2-9b-it:free",
+  tier:            "free",
+  speed:           "FAST",
+  badge:           "FREE",
+  free:            true,
+  creditCostPerMsg: "0 cr",
+  simpleTasks:     3,
+  complexTasks:    2,
+},
   // ── LOW ───────────────────────────────────────────────────────────────────
   {
     id: "gemini-flash",
