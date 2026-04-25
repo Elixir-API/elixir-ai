@@ -1,137 +1,119 @@
-let _mem: Map<string, number> | null = null
-const mem = () => { if (!_mem) _mem = new Map(); return _mem! }
+import { kv } from "@vercel/kv"
 
-let _dailyMem: Map<string, number> | null = null
-const dailyMem = () => { if (!_dailyMem) _dailyMem = new Map(); return _dailyMem! }
+// ─── CAD Config ───────────────────────────────────────────────────────────────
+export const USD_TO_CAD          = 1.38
+export const CREDIT_CAD_VALUE    = 4.99 / 25   // CA$0.1996 per credit
+export const MARKUP_MULTIPLIER   = 3.5
+export const DAILY_FREE_CREDITS  = 2
+export const STARTING_CREDITS    = 2
 
-const KEY       = (id: string) => `elixir:credits:${id}`
-const DAILY_KEY = (id: string) => `elixir:daily:${id}`
+// ─── Owner IDs (free usage) ───────────────────────────────────────────────────
+export const OWNER_IDS = new Set([
+  "YOUR_ROBLOX_ID_HERE", // replace with your actual Roblox ID
+])
 
-const STARTING_CREDITS = 3
-const DAILY_CREDITS    = 1
-const DAILY_MS         = 24 * 60 * 60 * 1000
-const OWNER_CREDITS    = 999_999
+// ─── Credit Packs (CAD) ───────────────────────────────────────────────────────
+export const CREDIT_PACKS = [
+  { id: "small",  credits: 25,  priceCAD: 4.99,  bonusPct: 0, popular: false },
+  { id: "medium", credits: 100, priceCAD: 19.99, bonusPct: 1, popular: true  },
+  { id: "large",  credits: 500, priceCAD: 99.99, bonusPct: 3, popular: false },
+] as const
 
-export const OWNER_IDS = new Set(["1682906375"])
+// ─── KV Helpers ───────────────────────────────────────────────────────────────
 
-async function getKV() {
-  if (!process.env.KV_REST_API_URL) return null
-  try {
-    const { kv } = await import("@vercel/kv")
-    return kv
-  } catch {
-    return null
-  }
-}
-
-// ── Auto-grant 1 credit every 24h ─────────────────────────────────────────────
-async function applyDailyIfReady(robloxId: string): Promise<void> {
-  if (OWNER_IDS.has(robloxId)) return
-
-  const kv  = await getKV()
-  const now = Date.now()
-
-  if (kv) {
-    const last = await kv.get<number>(DAILY_KEY(robloxId))
-    if (!last || now - last >= DAILY_MS) {
-      const current = (await kv.get<number>(KEY(robloxId))) ?? STARTING_CREDITS
-      await kv.set(KEY(robloxId), Math.round((current + DAILY_CREDITS) * 100) / 100)
-      await kv.set(DAILY_KEY(robloxId), now)
-    }
-  } else {
-    const dm   = dailyMem()
-    const last = dm.get(robloxId)
-    if (!last || now - last >= DAILY_MS) {
-      const current = mem().get(robloxId) ?? STARTING_CREDITS
-      mem().set(robloxId, Math.round((current + DAILY_CREDITS) * 100) / 100)
-      dm.set(robloxId, now)
-    }
-  }
-}
-
-// ── Get ───────────────────────────────────────────────────────────────────────
 export async function getCredits(robloxId: string): Promise<number> {
-  if (OWNER_IDS.has(robloxId)) return OWNER_CREDITS
-
-  await applyDailyIfReady(robloxId)
-
-  const kv = await getKV()
-  if (kv) {
-    const val = await kv.get<number>(KEY(robloxId))
-    if (val === null || val === undefined) {
-      await kv.set(KEY(robloxId), STARTING_CREDITS)
-      return STARTING_CREDITS
-    }
-    return val
-  }
-
-  const m = mem()
-  if (!m.has(robloxId)) m.set(robloxId, STARTING_CREDITS)
-  return m.get(robloxId)!
+  const credits = await kv.get<number>(`credits:${robloxId}`)
+  return credits ?? STARTING_CREDITS
 }
 
-// ── Deduct ────────────────────────────────────────────────────────────────────
+export async function setCredits(robloxId: string, amount: number): Promise<void> {
+  await kv.set(`credits:${robloxId}`, Math.max(0, amount))
+}
+
+export async function addCredits(robloxId: string, amount: number): Promise<number> {
+  const current    = await getCredits(robloxId)
+  const newBalance = current + amount
+  await setCredits(robloxId, newBalance)
+  return newBalance
+}
+
+// ─── Deduct Credits ───────────────────────────────────────────────────────────
+
 export async function deductCredits(
   robloxId: string,
-  amount: number,
-): Promise<{ ok: boolean; remaining: number; deducted: number; error?: string }> {
-  // Owner never gets charged
-  if (OWNER_IDS.has(robloxId)) {
-    return { ok: true, remaining: OWNER_CREDITS, deducted: amount }
-  }
-
+  amount: number
+): Promise<{ ok: boolean; error?: string; remaining?: number }> {
   const current = await getCredits(robloxId)
+
   if (current < amount) {
     return {
       ok: false,
-      remaining: current,
-      deducted: 0,
-      error: `Not enough credits — need ${amount.toFixed(2)}, have ${current.toFixed(2)}`,
+      error: `Not enough credits. You have ${current.toFixed(2)} cr, need ${amount.toFixed(2)} cr.`,
     }
   }
 
-  const newBalance = Math.round((current - amount) * 100) / 100
-  const kv = await getKV()
-  if (kv) {
-    await kv.set(KEY(robloxId), newBalance)
-  } else {
-    mem().set(robloxId, newBalance)
-  }
-
-  return { ok: true, remaining: newBalance, deducted: amount }
+  const newBalance = current - amount
+  await setCredits(robloxId, newBalance)
+  return { ok: true, remaining: newBalance }
 }
 
-// ── Add ───────────────────────────────────────────────────────────────────────
-export async function addCredits(
-  robloxId: string,
-  amount: number,
-): Promise<{ newBalance: number }> {
-  if (OWNER_IDS.has(robloxId)) return { newBalance: OWNER_CREDITS }
+// ─── Log Transaction ──────────────────────────────────────────────────────────
 
-  const current    = await getCredits(robloxId)
-  const newBalance = Math.round((current + amount) * 100) / 100
-  const kv         = await getKV()
-
-  if (kv) {
-    await kv.set(KEY(robloxId), newBalance)
-  } else {
-    mem().set(robloxId, newBalance)
-  }
-
-  return { newBalance }
-}
-
-// ── Log ───────────────────────────────────────────────────────────────────────
 export async function logTransaction(
   robloxId: string,
-  type: "deduct" | "add" | "purchase",
+  type: "deduct" | "add" | "daily" | "purchase",
   amount: number,
-  meta: Record<string, any>,
-) {
-  const kv = await getKV()
-  if (!kv) return
-  const logKey = `elixir:log:${robloxId}:${Date.now()}`
-  await kv.set(logKey, JSON.stringify({ type, amount, meta, ts: Date.now() }), {
-    ex: 60 * 60 * 24 * 30,
-  })
+  meta?: Record<string, any>
+): Promise<void> {
+  const entry = JSON.stringify({ type, amount, meta, timestamp: Date.now() })
+  await kv.lpush(`transactions:${robloxId}`, entry)
+  await kv.ltrim(`transactions:${robloxId}`, 0, 99) // keep last 100
+}
+
+// ─── Daily Credits ────────────────────────────────────────────────────────────
+
+export async function claimDailyCredits(robloxId: string): Promise<{
+  ok: boolean
+  granted: number
+  balance: number
+  message: string
+  nextGrant?: number
+}> {
+  const key       = `daily:${robloxId}`
+  const lastGrant = await kv.get<number>(key)
+
+  if (lastGrant) {
+    const hoursSince = (Date.now() - lastGrant) / 36e5
+    if (hoursSince < 24) {
+      const nextGrant = lastGrant + 24 * 60 * 60 * 1000
+      const balance   = await getCredits(robloxId)
+      return { ok: false, granted: 0, balance, message: "Already claimed today!", nextGrant }
+    }
+  }
+
+  const balance = await addCredits(robloxId, DAILY_FREE_CREDITS)
+  await kv.set(key, Date.now())
+  await logTransaction(robloxId, "daily", DAILY_FREE_CREDITS)
+
+  return {
+    ok:      true,
+    granted: DAILY_FREE_CREDITS,
+    balance,
+    message: `+${DAILY_FREE_CREDITS} daily credits added!`,
+  }
+}
+
+// ─── Calculate Credits From OpenRouter USD Cost ───────────────────────────────
+//
+// "I am [model]. OpenRouter charges $X USD.
+//  Convert to CAD: × 1.38
+//  Apply 3.5× markup
+//  Divide by credit value → N credits to deduct"
+
+export function calcCreditsFromUSD(openRouterCostUSD: number): number {
+  if (openRouterCostUSD === 0) return 0
+  const costCAD   = openRouterCostUSD * USD_TO_CAD
+  const chargeCAD = costCAD * MARKUP_MULTIPLIER
+  const credits   = chargeCAD / CREDIT_CAD_VALUE
+  return Math.round(credits * 100) / 100
 }
