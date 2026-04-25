@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Bad params" }, { status: 400 })
     }
 
-    const { newBalance } = await addCredits(String(robloxId), Number(amount))
+    const newBalance = await addCredits(String(robloxId), Number(amount))
     return NextResponse.json({ ok: true, newBalance })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e.message }, { status: 500 })
