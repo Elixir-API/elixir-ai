@@ -48,7 +48,7 @@ type Step = {
   status?: "pending" | "running" | "done" | "error"
 }
 
-type Phase = "planning" | "executing" | "finalizing" | "injected" | "done"
+type Phase = "planning" | "thinking" | "executing" | "finalizing" | "injected" | "done"
 
 type Message = {
   id: string
@@ -85,11 +85,20 @@ async function fetchUser(): Promise<RobloxUser | null> {
 
 // ── Location sanitizer ────────────────────────────────────────────────────────
 
-function sanitizeLocation(location: string | null): string | null {
-  if (!location) return null
-  const parts = location.split("/")
+function sanitizeLocation(raw: string | null, hint?: string): string | null {
+  if (!raw?.trim()) return null
+  const parts = raw.trim().split("/").filter(Boolean)
+  if (parts.length === 1) {
+    const name = hint
+      ? hint.replace(/[^a-zA-Z0-9]/g, "").slice(0, 24) || "ElixirHandler"
+      : "ElixirHandler"
+    return `${parts[0]}/${name}`
+  }
   if (parts.length >= 2 && parts[parts.length - 1] === parts[parts.length - 2]) {
-    parts[parts.length - 1] = parts[parts.length - 1] + "Handler"
+    const name = hint
+      ? hint.replace(/[^a-zA-Z0-9]/g, "").slice(0, 24)
+      : null
+    parts[parts.length - 1] = name || (parts[parts.length - 1] + "Script")
   }
   return parts.join("/")
 }
@@ -102,57 +111,69 @@ function Spinner() {
   )
 }
 
-// ── Typewriter ────────────────────────────────────────────────────────────────
-
-function TypewriterText({ text }: { text: string }) {
-  const [displayed, setDisplayed] = useState("")
-  const [done, setDone]           = useState(false)
-
-  useEffect(() => {
-    setDisplayed("")
-    setDone(false)
-    let i = 0
-    const id = setInterval(() => {
-      i++
-      setDisplayed(text.slice(0, i))
-      if (i >= text.length) { clearInterval(id); setDone(true) }
-    }, 12)
-    return () => clearInterval(id)
-  }, [text])
-
-  return (
-    <span>
-      {displayed}
-      {!done && (
-        <span className="inline-block w-[2px] h-[13px] ml-[1px] bg-purple-400/60 align-middle animate-pulse" />
-      )}
-    </span>
-  )
-}
-
 // ── Thought bubble ────────────────────────────────────────────────────────────
 
-function ThoughtBubble({ thinking }: { thinking: string }) {
-  const [open, setOpen] = useState(false)
+function ThoughtBubble({
+  thinking,
+  isStreaming,
+}: {
+  thinking: string
+  isStreaming: boolean
+}) {
+  const [open, setOpen]   = useState(false)
+  const scrollRef         = useRef<HTMLDivElement>(null)
+
+  // Auto-open the moment streaming begins
+  useEffect(() => {
+    if (isStreaming) setOpen(true)
+  }, [isStreaming])
+
+  // Follow the bottom of the text while streaming
+  useEffect(() => {
+    if (isStreaming && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [thinking, isStreaming])
+
+  if (!thinking && !isStreaming) return null
 
   return (
     <div className="mb-2">
       <button
         onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/18 hover:border-purple-500/35 transition-all group"
+        className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/15 hover:border-purple-500/35 transition-all group"
       >
-        <span className="text-[11px]">💭</span>
+        {/* Bouncing dots while streaming, static bubble when done */}
+        {isStreaming ? (
+          <span className="flex items-center gap-[3px]">
+            <span className="w-[5px] h-[5px] rounded-full bg-purple-400/70 animate-bounce [animation-delay:0ms]" />
+            <span className="w-[5px] h-[5px] rounded-full bg-purple-400/70 animate-bounce [animation-delay:80ms]" />
+            <span className="w-[5px] h-[5px] rounded-full bg-purple-400/70 animate-bounce [animation-delay:160ms]" />
+          </span>
+        ) : (
+          <span className="text-[13px] leading-none">💭</span>
+        )}
         <span className="text-purple-300/55 text-[11px] group-hover:text-purple-300/80 transition-colors">
-          {open ? "Hide thinking" : "See thinking"}
+          {isStreaming ? "Thinking..." : open ? "Hide thinking" : "See thinking"}
         </span>
-        <span className={`text-purple-400/40 text-[9px] transition-transform duration-200 ${open ? "rotate-180" : ""}`}>
-          ▲
-        </span>
+        {!isStreaming && (
+          <span className={`text-purple-400/35 text-[9px] transition-transform duration-200 ${open ? "rotate-180" : ""}`}>
+            ▲
+          </span>
+        )}
       </button>
 
       {open && (
-        <div className="mt-1.5 px-4 py-3 rounded-xl bg-white/[0.015] border border-purple-500/10 text-purple-200/35 text-[11px] leading-relaxed italic font-mono tracking-wide">
-          <TypewriterText text={thinking} />
+        <div
+          ref={scrollRef}
+          className="mt-1.5 px-4 py-3 rounded-xl bg-white/[0.015] border border-purple-500/[0.12] max-h-48 overflow-y-auto scroll-smooth"
+        >
+          <p className="text-purple-200/40 text-[11px] leading-[1.7] font-mono tracking-wide whitespace-pre-wrap break-words">
+            {thinking}
+            {isStreaming && (
+              <span className="inline-block w-[2px] h-[12px] ml-[2px] bg-purple-400/60 align-middle animate-pulse" />
+            )}
+          </p>
         </div>
       )}
     </div>
@@ -164,7 +185,6 @@ function ThoughtBubble({ thinking }: { thinking: string }) {
 function SummaryLine({ line }: { line: string }) {
   const l = line.toLowerCase()
 
-  // Dim section headers
   if (l.endsWith(":") && l.length < 60) {
     return (
       <p className="text-white/20 text-[10px] uppercase tracking-wider font-medium mt-1 mb-0.5">
@@ -172,8 +192,6 @@ function SummaryLine({ line }: { line: string }) {
       </p>
     )
   }
-
-  // Created / built / added / generated → emerald
   if (/\b(creat|built|added|generated|set up|insert|spawn|wrote)\w*\b/.test(l)) {
     return (
       <div className="flex items-start gap-2">
@@ -182,8 +200,6 @@ function SummaryLine({ line }: { line: string }) {
       </div>
     )
   }
-
-  // Modified / updated / changed / fixed → sky blue
   if (/\b(modif|updat|chang|fix|patch|adjust|tweak|edit)\w*\b/.test(l)) {
     return (
       <div className="flex items-start gap-2">
@@ -192,8 +208,6 @@ function SummaryLine({ line }: { line: string }) {
       </div>
     )
   }
-
-  // Deleted / removed → rose
   if (/\b(delet|remov|destroy|clear|wip)\w*\b/.test(l)) {
     return (
       <div className="flex items-start gap-2">
@@ -202,8 +216,6 @@ function SummaryLine({ line }: { line: string }) {
       </div>
     )
   }
-
-  // Script / GUI mentions → purple
   if (/\b(script|localscript|modulescript|gui|screengui|remote)\w*\b/.test(l)) {
     return (
       <div className="flex items-start gap-2">
@@ -212,8 +224,6 @@ function SummaryLine({ line }: { line: string }) {
       </div>
     )
   }
-
-  // Default
   return (
     <div className="flex items-start gap-2">
       <span className="text-white/20 text-xs mt-[3px] shrink-0">·</span>
@@ -257,8 +267,6 @@ function StepItem({ step }: { step: Step }) {
   )
 }
 
-// ── Steps card ────────────────────────────────────────────────────────────────
-
 function StepCard({ steps }: { steps: Step[] }) {
   return (
     <div className="w-full rounded-xl border border-white/[0.07] bg-white/[0.025] overflow-hidden">
@@ -271,17 +279,22 @@ function StepCard({ steps }: { steps: Step[] }) {
 
 function AssistantMessage({ msg }: { msg: Message }) {
   const { phase, content, steps, thinking } = msg
-  const isBuild = steps && steps.length > 0
+  const isBuild        = steps && steps.length > 0
+  const isThinking     = phase === "thinking"
+  const hasThought     = thinking !== undefined && thinking !== ""
 
   return (
     <div className="w-full flex flex-col gap-2">
 
-      {/* Thought bubble — appears once we have a plan */}
-      {thinking && phase !== "planning" && (
-        <ThoughtBubble thinking={thinking} />
+      {/* Thought bubble — visible during thinking phase or after (for builds only) */}
+      {(isThinking || (hasThought && isBuild)) && (
+        <ThoughtBubble
+          thinking={thinking ?? ""}
+          isStreaming={isThinking}
+        />
       )}
 
-      {/* Planning dots */}
+      {/* Planning dots — while waiting for plan API */}
       {phase === "planning" && (
         <div className="flex items-center gap-1.5 py-1">
           <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:0ms]" />
@@ -291,11 +304,10 @@ function AssistantMessage({ msg }: { msg: Message }) {
       )}
 
       {/* Steps card */}
-      {isBuild && phase !== "planning" && (
+      {isBuild && phase !== "planning" && phase !== "thinking" && (
         <StepCard steps={steps} />
       )}
 
-      {/* Finalizing */}
       {phase === "finalizing" && (
         <div className="flex items-center gap-2 text-white/30 text-xs">
           <Spinner />
@@ -303,12 +315,10 @@ function AssistantMessage({ msg }: { msg: Message }) {
         </div>
       )}
 
-      {/* Injected */}
       {phase === "injected" && (
         <p className="text-emerald-400/70 text-xs font-medium">Injected into Studio ✓</p>
       )}
 
-      {/* Done */}
       {phase === "done" && content && (
         <div className="flex flex-col gap-1.5">
           {content
@@ -320,15 +330,9 @@ function AssistantMessage({ msg }: { msg: Message }) {
                 .replace(/[🟢🟡🔵⚫🟠]/g, "")
                 .trim()
               if (!clean) return null
-
-              // Build → color coded summary
               if (isBuild) return <SummaryLine key={i} line={clean} />
-
-              // Conversational → plain readable
               return (
-                <p key={i} className="text-white/70 text-sm leading-relaxed">
-                  {clean}
-                </p>
+                <p key={i} className="text-white/70 text-sm leading-relaxed">{clean}</p>
               )
             })}
         </div>
@@ -345,9 +349,7 @@ function SystemBubble({ msg }: { msg: Message }) {
       <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/[0.03] border border-white/[0.06]">
         {msg.scanning && <Spinner />}
         <span className="text-white/30 text-xs">{msg.content}</span>
-        {msg.scanning && (
-          <span className="text-white/15 text-xs">· reading context...</span>
-        )}
+        {msg.scanning && <span className="text-white/15 text-xs">· reading context...</span>}
       </div>
     </div>
   )
@@ -372,13 +374,11 @@ export default function ChatArea() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const abortRef    = useRef(false)
 
-  // ── Load user ──────────────────────────────────────────────────────────────
   useEffect(() => {
     fetchUser().then(u => { if (u) setUser(u) })
     setOwnerMode(localStorage.getItem("elx_owner") === "true")
   }, [])
 
-  // ── Credits polling ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!user?.id) return
     const load = async () => {
@@ -392,7 +392,6 @@ export default function ChatArea() {
     return () => clearInterval(id)
   }, [user?.id])
 
-  // ── Plugin polling ─────────────────────────────────────────────────────────
   useEffect(() => {
     const check = async () => {
       try {
@@ -406,12 +405,10 @@ export default function ChatArea() {
     return () => clearInterval(id)
   }, [user?.id])
 
-  // ── Auto scroll ────────────────────────────────────────────────────────────
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
 
-  // ── Textarea resize ────────────────────────────────────────────────────────
   useEffect(() => {
     const el = textareaRef.current
     if (!el) return
@@ -419,7 +416,6 @@ export default function ChatArea() {
     el.style.height = Math.min(el.scrollHeight, 160) + "px"
   }, [input])
 
-  // ── Image paste ────────────────────────────────────────────────────────────
   useEffect(() => {
     const el = textareaRef.current
     if (!el) return
@@ -443,6 +439,12 @@ export default function ChatArea() {
 
   function updateMsg(id: string, patch: Partial<Message>) {
     setMessages(prev => prev.map(m => m.id === id ? { ...m, ...patch } : m))
+  }
+
+  function appendThinking(id: string, token: string) {
+    setMessages(prev =>
+      prev.map(m => m.id === id ? { ...m, thinking: (m.thinking ?? "") + token } : m)
+    )
   }
 
   function updateStep(msgId: string, stepId: string, status: Step["status"]) {
@@ -474,12 +476,10 @@ export default function ChatArea() {
       .join("\n")
   }
 
-  // ── Model switch ───────────────────────────────────────────────────────────
   function handleModelChange(newModel: AIModel) {
     if (newModel.id === selectedModel.id) return
     setSelectedModel(newModel)
     if (messages.length === 0) return
-
     const switchId = `sys-${Date.now()}`
     setMessages(prev => [...prev, {
       id: switchId, role: "system",
@@ -496,18 +496,13 @@ export default function ChatArea() {
     const content = input.trim()
     if (!content || loading) return
 
-    // Owner passphrase
     if (content.includes(OWNER_PHRASE)) {
       setOwnerMode(true)
       localStorage.setItem("elx_owner", "true")
       setMessages(prev => [
         ...prev,
         { id: `u-${Date.now()}`, role: "user", content },
-        {
-          id: `a-${Date.now()}`, role: "assistant",
-          content: "✅ Owner control activated. Full access granted.",
-          phase: "done",
-        },
+        { id: `a-${Date.now()}`, role: "assistant", content: "✅ Owner control activated.", phase: "done" },
       ])
       setInput("")
       return
@@ -516,14 +511,13 @@ export default function ChatArea() {
     const imageToSend = attachedImage
     const contextSnap = buildContext(messages)
 
-    // Vision gate
     if (imageToSend && !VISION_MODELS.has(selectedModel.apiId)) {
       setMessages(prev => [
         ...prev,
         { id: `u-${Date.now()}`, role: "user", content, imageDataUrl: imageToSend },
         {
           id: `a-${Date.now()}`, role: "assistant", phase: "done",
-          content: "Sorry, image input isn't supported with this model. Switch to Gemini Flash, GPT-4o, or Claude to use image references!",
+          content: "Image input isn't supported with this model. Switch to Gemini Flash, GPT-4o, or Claude.",
         },
       ])
       setAttachedImage(null)
@@ -545,54 +539,94 @@ export default function ChatArea() {
     const aId  = `a-${Date.now() + 1}`
     const aMsg: Message = {
       id: aId, role: "assistant",
-      content: "", phase: "planning", steps: [],
+      content: "", phase: "planning", thinking: "", steps: [],
     }
 
     setMessages(prev => [...prev, uMsg, aMsg])
 
     try {
-      // ── 1. Plan ────────────────────────────────────────────────────────────
-      const planRes = await fetch("/api/chat/plan", {
-        method: "POST",
+      // ── Fire think + plan simultaneously ──────────────────────────────────
+      const thinkFetch = fetch("/api/chat/think", {
+        method:  "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: content,
-          modelId: selectedModel.apiId,
-          robloxId: user?.id ?? null,
+          message:             content,
+          modelId:             selectedModel.apiId,
           conversationContext: contextSnap,
-          hasImage: !!imageToSend,
+        }),
+      })
+
+      const planFetch = fetch("/api/chat/plan", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message:             content,
+          modelId:             selectedModel.apiId,
+          robloxId:            user?.id ?? null,
+          conversationContext: contextSnap,
+          hasImage:            !!imageToSend,
           ownerMode,
         }),
       })
 
-      const plan = await planRes.json()
+      // ── Wait for plan first (non-streaming, resolves fast) ────────────────
+      const plan = await planFetch.then(r => r.json())
 
-      // ── Conversational ─────────────────────────────────────────────────────
+      // ── Conversational — skip thinking entirely ───────────────────────────
       if (plan.conversational === true) {
         updateMsg(aId, {
-          content: plan.reply ?? "What can I help you with?",
-          phase: "done",
-          steps: [],
+          thinking: undefined,
+          content:  plan.reply ?? "What can I help you with?",
+          phase:    "done",
+          steps:    [],
         })
         setLoading(false)
         return
       }
 
-      // ── Build ──────────────────────────────────────────────────────────────
+      // ── Build — switch to thinking phase, stream live thoughts ────────────
+      updateMsg(aId, { phase: "thinking" })
+
+      try {
+        const thinkRes = await thinkFetch
+        if (thinkRes.ok && thinkRes.body) {
+          const reader  = thinkRes.body.getReader()
+          const decoder = new TextDecoder()
+          let buffer    = ""
+
+          outer: while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split("\n")
+            buffer = lines.pop() ?? ""
+
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue
+              const data = line.slice(6).trim()
+              if (data === "[DONE]") break outer
+              try {
+                const { token } = JSON.parse(data)
+                if (token) appendThinking(aId, token)
+              } catch {}
+            }
+
+            if (abortRef.current) break
+          }
+        }
+      } catch {}
+      // ── Thinking done — move to steps ─────────────────────────────────────
+
       const steps: Step[] = (plan.steps ?? []).map((s: Step) => ({
         ...s,
-        location: sanitizeLocation(s.location),
-        status: "pending" as const,
+        location: sanitizeLocation(s.location, s.description),
+        status:   "pending" as const,
       }))
 
-      updateMsg(aId, {
-        thinking: plan.thinking ?? undefined,
-        content: "",
-        phase: "executing",
-        steps,
-      })
+      updateMsg(aId, { phase: "executing", steps })
 
-      // ── 2. Execute steps ───────────────────────────────────────────────────
+      // ── Execute each step ─────────────────────────────────────────────────
       const completedSteps: Step[] = []
 
       for (const step of steps) {
@@ -607,16 +641,16 @@ export default function ChatArea() {
         }
 
         const execRes = await fetch("/api/chat/execute", {
-          method: "POST",
+          method:  "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            message: content,
+            messages,
             step,
-            modelId: selectedModel.apiId,
-            robloxId: user?.id ?? null,
+            modelId:             selectedModel.apiId,
+            robloxId:            user?.id ?? null,
             conversationContext: plan.thinking ?? "",
             uiStyle,
-            imageDataUrl: imageToSend ?? null,
+            imageDataUrl:        imageToSend ?? null,
             ownerMode,
           }),
         })
@@ -635,32 +669,27 @@ export default function ChatArea() {
         await new Promise(r => setTimeout(r, 350))
       }
 
-      // ── 3. Finalizing ──────────────────────────────────────────────────────
       updateMsg(aId, { phase: "finalizing" })
       await new Promise(r => setTimeout(r, 900))
-
-      // ── 4. Injected ────────────────────────────────────────────────────────
       updateMsg(aId, { phase: "injected" })
       await new Promise(r => setTimeout(r, 800))
 
-      // ── 5. Summary ─────────────────────────────────────────────────────────
       const sumRes  = await fetch("/api/chat/summary", {
-        method: "POST",
+        method:  "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userRequest: content,
+          userRequest:    content,
           completedSteps,
-          robloxId: user?.id ?? null,
+          robloxId:       user?.id ?? null,
         }),
       })
       const sumData = await sumRes.json()
 
       updateMsg(aId, {
         content: sumData.summary || "Done! Check Studio.",
-        phase: "done",
+        phase:   "done",
       })
 
-      // Refresh credits
       if (user?.id) {
         try {
           const cr = await fetch(`/api/credits?robloxId=${user.id}`)
@@ -671,7 +700,7 @@ export default function ChatArea() {
     } catch (e: any) {
       updateMsg(aId, {
         content: `⚠ ${e?.message ?? "Something went wrong."}`,
-        phase: "done",
+        phase:   "done",
       })
     } finally {
       setLoading(false)
@@ -683,13 +712,11 @@ export default function ChatArea() {
     <div className="flex flex-col h-full bg-[#080808] relative">
       {showShop && <ShopModal onClose={() => setShowShop(false)} />}
 
-      {/* Glows */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute top-[-5%] left-[15%] w-[600px] h-[500px] rounded-full bg-purple-600/[0.055] blur-[130px]" />
         <div className="absolute bottom-0 right-[5%] w-[380px] h-[280px] rounded-full bg-violet-700/[0.04] blur-[100px]" />
       </div>
 
-      {/* Plugin warning */}
       {!pluginConnected && (
         <div className="relative z-10 mx-4 mt-4 px-4 py-2.5 rounded-xl bg-yellow-500/5 border border-yellow-500/20 flex items-center gap-3 shrink-0">
           <span className="text-yellow-400">⚡</span>
@@ -706,11 +733,8 @@ export default function ChatArea() {
         </div>
       )}
 
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto relative z-10 px-4 py-6">
         {messages.length === 0 ? (
-
-          /* Empty state */
           <div className="flex flex-col items-center justify-center h-full min-h-[50vh] text-center gap-5">
             <div className="w-16 h-16 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-3xl shadow-[0_0_50px_rgba(139,92,246,0.12)]">
               🧪
@@ -733,14 +757,10 @@ export default function ChatArea() {
               ))}
             </div>
           </div>
-
         ) : (
-
-          /* Message list */
           <div className="max-w-2xl mx-auto space-y-4 pb-2">
             {messages.map(msg => {
               if (msg.role === "system") return <SystemBubble key={msg.id} msg={msg} />
-
               return (
                 <div
                   key={msg.id}
@@ -794,10 +814,7 @@ export default function ChatArea() {
         )}
       </div>
 
-      {/* Input area */}
       <div className="relative z-10 px-4 pb-5 pt-1 max-w-2xl mx-auto w-full shrink-0">
-
-        {/* UI Style selector */}
         <div className="flex items-center gap-1.5 mb-2 px-0.5">
           <span className="text-white/15 text-[9px] uppercase tracking-widest mr-0.5">Style</span>
           {UI_STYLES.map(s => (
@@ -815,7 +832,6 @@ export default function ChatArea() {
           ))}
         </div>
 
-        {/* Attached image preview */}
         {attachedImage && (
           <div className="relative inline-block mb-2">
             <img src={attachedImage} alt="attached" className="h-14 rounded-xl border border-white/10 object-cover" />

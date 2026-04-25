@@ -5,6 +5,34 @@ import { deductCredits, logTransaction, OWNER_IDS } from "@/lib/credits"
 
 const OWNER_PHRASE = "ELX-9xK2mP7vQn"
 
+// ── Location sanitizer ────────────────────────────────────────────────────────
+
+function sanitizeLocation(raw: string | null | undefined, hint?: string): string {
+  if (!raw?.trim()) return "ServerScriptService/ElixirScript"
+
+  const parts = raw.trim().split("/").filter(Boolean)
+
+  // Only a service name, no script name
+  if (parts.length === 1) {
+    const name = hint
+      ? hint.replace(/[^a-zA-Z0-9]/g, "").slice(0, 24) || "ElixirHandler"
+      : "ElixirHandler"
+    return `${parts[0]}/${name}`
+  }
+
+  // Duplicate: StarterPlayerScripts/StarterPlayerScripts
+  const last = parts[parts.length - 1]
+  const prev = parts[parts.length - 2]
+  if (last === prev) {
+    const name = hint
+      ? hint.replace(/[^a-zA-Z0-9]/g, "").slice(0, 24)
+      : null
+    parts[parts.length - 1] = name || (last + "Script")
+  }
+
+  return parts.join("/")
+}
+
 // ── UI Style guides ───────────────────────────────────────────────────────────
 
 const UI_STYLES: Record<string, string> = {
@@ -26,10 +54,7 @@ STYLE RULES:
 FONTS:
   Title:   Font.GothamBold,   Size 16
   Body:    Font.Gotham,       Size 13
-  Button:  Font.GothamMedium, Size 13
-BUTTON EXAMPLE:
-  Size=UDim2.new(0,130,0,36), BG=Color3.fromRGB(25,25,25),
-  TextColor=white, CornerRadius UDim(0,6), NO stroke`,
+  Button:  Font.GothamMedium, Size 13`,
 
   modern: `
 === UI STYLE: MODERN DARK ===
@@ -37,7 +62,7 @@ PALETTE:
   Background  = Color3.fromRGB(10,  10,  18 )
   Panel       = Color3.fromRGB(20,  20,  34 )
   Card        = Color3.fromRGB(28,  28,  45 )
-  Accent      = Color3.fromRGB(124, 58,  237)  -- purple
+  Accent      = Color3.fromRGB(124, 58,  237)
   AccentLight = Color3.fromRGB(167, 105, 255)
   Text        = Color3.fromRGB(230, 228, 250)
   Subtext     = Color3.fromRGB(130, 125, 160)
@@ -46,93 +71,52 @@ STYLE RULES:
   CornerRadius = UDim.new(0, 12)
   UIStroke: Thickness=1, Color=Border, Transparency=0.4
   Button UIGradient: Color0=Color3.fromRGB(139,92,246), Color1=Color3.fromRGB(109,40,217), Rotation=90
-  Cards: BackgroundTransparency=0.1 with subtle border
   Padding: UIPadding Left=16 Right=16 Top=12 Bottom=12
 FONTS:
   Title:   Font.GothamBold,   Size 20
   Body:    Font.Gotham,       Size 14
-  Button:  Font.GothamBold,   Size 14
-BUTTON EXAMPLE:
-  Size=UDim2.new(0,160,0,44), BG=Color3.fromRGB(124,58,237),
-  UIGradient as above, CornerRadius UDim(0,12), TextColor=white`,
+  Button:  Font.GothamBold,   Size 14`,
 
   sleek: `
 === UI STYLE: SLEEK GLASS ===
 PALETTE:
   Background  = Color3.fromRGB(5,   5,   12 )
-  Glass       = Color3.fromRGB(255, 255, 255)  -- use with high transparency
-  GlassBorder = Color3.fromRGB(255, 255, 255)  -- use with high transparency
+  Glass       = Color3.fromRGB(255, 255, 255)
   Accent      = Color3.fromRGB(180, 170, 255)
   Text        = Color3.fromRGB(240, 238, 255)
   Subtext     = Color3.fromRGB(140, 135, 175)
-GLASS TECHNIQUE (use for ALL panels):
+GLASS TECHNIQUE:
   BackgroundColor3 = Color3.fromRGB(255,255,255)
   BackgroundTransparency = 0.88
-  UIStroke: Color=Color3.fromRGB(255,255,255), Transparency=0.75, Thickness=1
+  UIStroke: Color=white, Transparency=0.75, Thickness=1
   CornerRadius = UDim.new(0, 18)
-STYLE RULES:
-  Extreme minimalism. Maximum whitespace.
-  Only essential elements on screen.
-  Padding: UIPadding Left=20 Right=20 Top=16 Bottom=16
 FONTS:
   Title:   Font.GothamBold, Size 17
-  Body:    Font.Gotham,     Size 13
-  Button:  Font.Gotham,     Size 13
-BUTTON EXAMPLE:
-  Glass technique above, Size=UDim2.new(0,150,0,42), TextColor=Accent`,
+  Body:    Font.Gotham,     Size 13`,
 
   cartoony: `
 === UI STYLE: CARTOONY ===
 PALETTE:
-  Background  = Color3.fromRGB(255, 245, 180)  -- warm yellow
-  PrimaryBtn  = Color3.fromRGB(255, 75,  75 )  -- red
-  SecondaryBtn= Color3.fromRGB(75,  130, 255)  -- blue
-  Success     = Color3.fromRGB(75,  210, 100)  -- green
+  Background  = Color3.fromRGB(255, 245, 180)
+  PrimaryBtn  = Color3.fromRGB(255, 75,  75 )
+  SecondaryBtn= Color3.fromRGB(75,  130, 255)
   Text        = Color3.fromRGB(255, 255, 255)
   Outline     = Color3.fromRGB(0,   0,   0  )
 REQUIRED ON EVERY ELEMENT:
-  UIStroke: Thickness=3, Color=Color3.fromRGB(0,0,0)  -- BLACK OUTLINE IS MANDATORY
-  CornerRadius = UDim.new(0, 24)  -- very round
-STYLE RULES:
-  Oversized elements. Big padding.
-  Drop shadow: duplicate frame offset by (4,4) with black color
-  Padding: UIPadding Left=18 Right=18 Top=14 Bottom=14
-FONTS:
-  ALL TEXT: Font.GothamBold or Font.GothamBlack
-  Title Size=22, Body Size=16, Button Size=18
-  ALL UPPERCASE for buttons and labels
-BUTTON EXAMPLE:
-  Size=UDim2.new(0,180,0,56), BG=Color3.fromRGB(255,75,75),
-  UIStroke Thickness=3 black, CornerRadius UDim(0,24),
-  TextColor=white, Font=GothamBold, TextScaled=false`,
+  UIStroke: Thickness=3, Color=black — MANDATORY
+  CornerRadius = UDim.new(0, 24)
+FONTS: Font.GothamBold ALL CAPS everywhere`,
 
   neon: `
 === UI STYLE: NEON CYBERPUNK ===
 PALETTE:
-  Background = Color3.fromRGB(0,   0,   0  )  -- pure black
-  Panel      = Color3.fromRGB(8,   8,   16 )
+  Background = Color3.fromRGB(0,   0,   0  )
   NeonCyan   = Color3.fromRGB(0,   255, 240)
   NeonPink   = Color3.fromRGB(255, 0,   180)
   NeonLime   = Color3.fromRGB(0,   255, 65 )
-  NeonYellow = Color3.fromRGB(255, 240, 0  )
   Text       = Color3.fromRGB(220, 255, 255)
-GLOW TECHNIQUE (UIStroke simulates neon glow):
-  UIStroke: Color=NeonCyan, Thickness=2, Transparency=0
-  Use NeonPink for secondary elements
-  Use NeonLime for success/confirm
-STYLE RULES:
-  CornerRadius = UDim.new(0, 4)  -- sharp, angular
-  Panel BackgroundTransparency = 0.6
-  ALL text UPPERCASE
-  Thin divider lines using frames H=1 with neon color
-  Padding: UIPadding Left=14 Right=14 Top=10 Bottom=10
-FONTS:
-  Font.Code or Font.RobotoMono for labels Size=12
-  Font.GothamBold for values/numbers Size=16
-BUTTON EXAMPLE:
-  Size=UDim2.new(0,160,0,38), BG=Color3.fromRGB(0,0,0),
-  BackgroundTransparency=0.3, UIStroke Color=NeonCyan Thickness=2,
-  CornerRadius UDim(0,4), TextColor=NeonCyan, ALL CAPS`,
+GLOW: UIStroke Color=NeonCyan Thickness=2
+STYLE: CornerRadius UDim(0,4), ALL UPPERCASE, Font.Code`,
 }
 
 const BASE_SYSTEM = `You are Elixir — an expert Roblox Lua engineer. You write code that works immediately.
@@ -159,7 +143,10 @@ CODE QUALITY REQUIREMENTS:
 - WaitForChild() for instances that may not exist yet
 - :Disconnect() all connections on cleanup
 - RemoteEvents in ReplicatedStorage for client-server communication
-- Proper DataStore retry logic with exponential backoff`
+- Proper DataStore retry logic with exponential backoff
+
+LOCATION RULE — the Place header MUST exactly match what was requested.
+NEVER create sub-folders or rename services. Use exactly: ServiceName/ScriptName`
 
 export const dynamic = "force-dynamic"
 
@@ -177,7 +164,6 @@ export async function POST(req: NextRequest) {
       ownerMode,
     } = body
 
-    // ── Auth checks ───────────────────────────────────────────────────────────
     if (!robloxId) {
       return NextResponse.json(
         { ok: false, error: "Not logged in — please sign in with Roblox first." },
@@ -191,7 +177,6 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // ── Test step — no code needed ─────────────────────────────────────────────
     if (step?.type === "test") {
       return NextResponse.json({
         ok: true, injected: false,
@@ -200,23 +185,23 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    const model    = modelId    ?? "google/gemini-2.0-flash-001"
-    const location = step?.location ?? "ServerScriptService/ElixirScript"
+    const model    = modelId ?? "google/gemini-2.0-flash-001"
+    // ← sanitize here, passing step description as naming hint
+    const location = sanitizeLocation(step?.location, step?.description)
     const style    = (uiStyle as string) ?? "modern"
     const isOwner  = OWNER_IDS.has(String(robloxId)) || ownerMode === true
 
-    // ── Full system prompt with style guide injected ───────────────────────────
     const styleGuide = UI_STYLES[style] ?? UI_STYLES.modern
     const SYSTEM = `${BASE_SYSTEM}\n\n${styleGuide}`
 
     const userPrompt = [
       `User request: "${message}"`,
       `Implement this step: ${step?.description ?? message}`,
-      `Script goes at: ${location}`,
+      `Script goes at exactly: ${location}`,
+      `The -- Place: header in your output MUST be: ${location}`,
       conversationContext ? `Prior context:\n${conversationContext}` : "",
     ].filter(Boolean).join("\n\n")
 
-    // ── Credits ───────────────────────────────────────────────────────────────
     if (!isOwner) {
       const estimate = estimateCreditCost(model, userPrompt)
       if (!estimate.isFree) {
@@ -233,7 +218,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ── Build AI message (with vision if image attached) ──────────────────────
     const userMessage = imageDataUrl
       ? {
           role: "user",
@@ -244,7 +228,6 @@ export async function POST(req: NextRequest) {
         }
       : { role: "user", content: userPrompt }
 
-    // ── Call OpenRouter ───────────────────────────────────────────────────────
     const aiRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -255,9 +238,9 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model,
-        stream: false,
-        max_tokens: 4096,
-        temperature: 0.1,
+        stream:       false,
+        max_tokens:   4096,
+        temperature:  0.1,
         messages: [
           { role: "system", content: SYSTEM },
           userMessage,
@@ -271,13 +254,11 @@ export async function POST(req: NextRequest) {
     let code: string = aiData.choices?.[0]?.message?.content ?? ""
     if (!code.trim()) throw new Error("AI returned empty code")
 
-    // Strip fences if AI ignored rules
     code = code
       .replace(/^```(?:lua|luau)?\s*\n?/im, "")
       .replace(/\n?```\s*$/im, "")
       .trim()
 
-    // Ensure required headers
     if (!code.startsWith("-- Type:")) {
       const parts = location.split("/")
       const name  = parts[parts.length - 1] ?? "ElixirScript"
@@ -286,7 +267,7 @@ export async function POST(req: NextRequest) {
 
     pushCode(String(robloxId), code)
     console.log(
-      `[Elixir] ✓ | user:${robloxId} | style:${style} | lines:${code.split("\n").length}${isOwner ? " | OWNER" : ""}`
+      `[Elixir] ✓ | user:${robloxId} | loc:${location} | style:${style} | lines:${code.split("\n").length}${isOwner ? " | OWNER" : ""}`
     )
 
     return NextResponse.json({
