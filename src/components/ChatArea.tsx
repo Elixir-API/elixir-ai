@@ -54,7 +54,7 @@ type Message = {
   id: string
   role: "user" | "assistant" | "system"
   content: string
-  thinking?: string      // ← AI's plan thought, shown in thought bubble
+  thinking?: string
   steps?: Step[]
   phase?: Phase
   imageDataUrl?: string
@@ -83,6 +83,17 @@ async function fetchUser(): Promise<RobloxUser | null> {
   } catch { return null }
 }
 
+// ── Location sanitizer ────────────────────────────────────────────────────────
+
+function sanitizeLocation(location: string | null): string | null {
+  if (!location) return null
+  const parts = location.split("/")
+  if (parts.length >= 2 && parts[parts.length - 1] === parts[parts.length - 2]) {
+    parts[parts.length - 1] = parts[parts.length - 1] + "Handler"
+  }
+  return parts.join("/")
+}
+
 // ── Spinner ───────────────────────────────────────────────────────────────────
 
 function Spinner() {
@@ -91,50 +102,78 @@ function Spinner() {
   )
 }
 
-// ── Thought Bubble ────────────────────────────────────────────────────────────
+// ── Typewriter ────────────────────────────────────────────────────────────────
+
+function TypewriterText({ text }: { text: string }) {
+  const [displayed, setDisplayed] = useState("")
+  const [done, setDone]           = useState(false)
+
+  useEffect(() => {
+    setDisplayed("")
+    setDone(false)
+    let i = 0
+    const id = setInterval(() => {
+      i++
+      setDisplayed(text.slice(0, i))
+      if (i >= text.length) { clearInterval(id); setDone(true) }
+    }, 12)
+    return () => clearInterval(id)
+  }, [text])
+
+  return (
+    <span>
+      {displayed}
+      {!done && (
+        <span className="inline-block w-[2px] h-[13px] ml-[1px] bg-purple-400/60 align-middle animate-pulse" />
+      )}
+    </span>
+  )
+}
+
+// ── Thought bubble ────────────────────────────────────────────────────────────
 
 function ThoughtBubble({ thinking }: { thinking: string }) {
   const [open, setOpen] = useState(false)
 
   return (
-    <div className="mb-1.5">
+    <div className="mb-2">
       <button
         onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/15 hover:border-purple-500/35 transition-all group"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/18 hover:border-purple-500/35 transition-all group"
       >
         <span className="text-[11px]">💭</span>
         <span className="text-purple-300/55 text-[11px] group-hover:text-purple-300/80 transition-colors">
           {open ? "Hide thinking" : "See thinking"}
         </span>
-        <span className={`text-purple-400/35 text-[9px] transition-transform duration-200 ${open ? "rotate-180" : ""}`}>
-          ▼
+        <span className={`text-purple-400/40 text-[9px] transition-transform duration-200 ${open ? "rotate-180" : ""}`}>
+          ▲
         </span>
       </button>
 
       {open && (
-        <div className="mt-1.5 px-3.5 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] text-white/35 text-xs leading-relaxed italic">
-          {thinking}
+        <div className="mt-1.5 px-4 py-3 rounded-xl bg-white/[0.015] border border-purple-500/10 text-purple-200/35 text-[11px] leading-relaxed italic font-mono tracking-wide">
+          <TypewriterText text={thinking} />
         </div>
       )}
     </div>
   )
 }
 
-// ── Color-coded summary line ──────────────────────────────────────────────────
+// ── Summary line (color coded) ────────────────────────────────────────────────
 
 function SummaryLine({ line }: { line: string }) {
   const l = line.toLowerCase()
 
-  // Dim header lines e.g. "Here's a summary of the work done:"
-  if (l.includes("summary") || (l.endsWith(":") && l.length < 60)) {
+  // Dim section headers
+  if (l.endsWith(":") && l.length < 60) {
     return (
-      <p className="text-white/25 text-[10px] uppercase tracking-wider font-medium mb-0.5">
+      <p className="text-white/20 text-[10px] uppercase tracking-wider font-medium mt-1 mb-0.5">
         {line}
       </p>
     )
   }
 
-  // Created / built / added / generated → emerald green
+  // Created / built / added / generated → emerald
   if (/\b(creat|built|added|generated|set up|insert|spawn|wrote)\w*\b/.test(l)) {
     return (
       <div className="flex items-start gap-2">
@@ -154,7 +193,7 @@ function SummaryLine({ line }: { line: string }) {
     )
   }
 
-  // Deleted / removed → red/rose
+  // Deleted / removed → rose
   if (/\b(delet|remov|destroy|clear|wip)\w*\b/.test(l)) {
     return (
       <div className="flex items-start gap-2">
@@ -178,7 +217,7 @@ function SummaryLine({ line }: { line: string }) {
   return (
     <div className="flex items-start gap-2">
       <span className="text-white/20 text-xs mt-[3px] shrink-0">·</span>
-      <p className="text-white/60 text-sm leading-relaxed">{line}</p>
+      <p className="text-white/55 text-sm leading-relaxed">{line}</p>
     </div>
   )
 }
@@ -237,7 +276,7 @@ function AssistantMessage({ msg }: { msg: Message }) {
   return (
     <div className="w-full flex flex-col gap-2">
 
-      {/* Thought bubble — only for build responses, once we have a plan */}
+      {/* Thought bubble — appears once we have a plan */}
       {thinking && phase !== "planning" && (
         <ThoughtBubble thinking={thinking} />
       )}
@@ -251,7 +290,7 @@ function AssistantMessage({ msg }: { msg: Message }) {
         </div>
       )}
 
-      {/* Steps */}
+      {/* Steps card */}
       {isBuild && phase !== "planning" && (
         <StepCard steps={steps} />
       )}
@@ -269,7 +308,7 @@ function AssistantMessage({ msg }: { msg: Message }) {
         <p className="text-emerald-400/70 text-xs font-medium">Injected into Studio ✓</p>
       )}
 
-      {/* Done — color-coded summary for builds, plain text for chat */}
+      {/* Done */}
       {phase === "done" && content && (
         <div className="flex flex-col gap-1.5">
           {content
@@ -282,7 +321,7 @@ function AssistantMessage({ msg }: { msg: Message }) {
                 .trim()
               if (!clean) return null
 
-              // Build response → color-coded
+              // Build → color coded summary
               if (isBuild) return <SummaryLine key={i} line={clean} />
 
               // Conversational → plain readable
@@ -464,7 +503,11 @@ export default function ChatArea() {
       setMessages(prev => [
         ...prev,
         { id: `u-${Date.now()}`, role: "user", content },
-        { id: `a-${Date.now()}`, role: "assistant", content: "✅ Owner control activated. Full access granted.", phase: "done" },
+        {
+          id: `a-${Date.now()}`, role: "assistant",
+          content: "✅ Owner control activated. Full access granted.",
+          phase: "done",
+        },
       ])
       setInput("")
       return
@@ -500,7 +543,10 @@ export default function ChatArea() {
       imageDataUrl: imageToSend ?? undefined,
     }
     const aId  = `a-${Date.now() + 1}`
-    const aMsg: Message = { id: aId, role: "assistant", content: "", phase: "planning", steps: [] }
+    const aMsg: Message = {
+      id: aId, role: "assistant",
+      content: "", phase: "planning", steps: [],
+    }
 
     setMessages(prev => [...prev, uMsg, aMsg])
 
@@ -521,7 +567,7 @@ export default function ChatArea() {
 
       const plan = await planRes.json()
 
-      // ── ✅ FIXED: conversational uses plan.reply (not plan.thinking) ───────
+      // ── Conversational ─────────────────────────────────────────────────────
       if (plan.conversational === true) {
         updateMsg(aId, {
           content: plan.reply ?? "What can I help you with?",
@@ -532,13 +578,15 @@ export default function ChatArea() {
         return
       }
 
-      // ── Build flow ─────────────────────────────────────────────────────────
+      // ── Build ──────────────────────────────────────────────────────────────
       const steps: Step[] = (plan.steps ?? []).map((s: Step) => ({
-        ...s, status: "pending" as const,
+        ...s,
+        location: sanitizeLocation(s.location),
+        status: "pending" as const,
       }))
 
       updateMsg(aId, {
-        thinking: plan.thinking ?? undefined,   // ← stored for thought bubble
+        thinking: plan.thinking ?? undefined,
         content: "",
         phase: "executing",
         steps,
@@ -599,7 +647,11 @@ export default function ChatArea() {
       const sumRes  = await fetch("/api/chat/summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userRequest: content, completedSteps, robloxId: user?.id ?? null }),
+        body: JSON.stringify({
+          userRequest: content,
+          completedSteps,
+          robloxId: user?.id ?? null,
+        }),
       })
       const sumData = await sumRes.json()
 
@@ -617,7 +669,10 @@ export default function ChatArea() {
       }
 
     } catch (e: any) {
-      updateMsg(aId, { content: `⚠ ${e?.message ?? "Something went wrong."}`, phase: "done" })
+      updateMsg(aId, {
+        content: `⚠ ${e?.message ?? "Something went wrong."}`,
+        phase: "done",
+      })
     } finally {
       setLoading(false)
     }
@@ -806,7 +861,11 @@ export default function ChatArea() {
             </button>
 
             <div className="flex items-center gap-2 ml-auto">
-              <ModelSelector value={selectedModel.id} onChange={handleModelChange} userCredits={userCredits} />
+              <ModelSelector
+                value={selectedModel.id}
+                onChange={handleModelChange}
+                userCredits={userCredits}
+              />
 
               {loading ? (
                 <button
