@@ -9,13 +9,13 @@ import { estimateCreditCost, formatCredits } from "@/lib/pricing"
 
 const OWNER_PHRASE = "ELX-9xK2mP7vQn"
 
-// Models that support vision/image input
 const VISION_MODELS = new Set([
   "google/gemini-2.0-flash-001",
   "google/gemini-2.0-flash-lite-001",
   "google/gemini-1.5-pro",
   "anthropic/claude-3.5-sonnet",
   "anthropic/claude-3.5-sonnet:beta",
+  "anthropic/claude-sonnet-4-5",
   "anthropic/claude-3-opus",
   "openai/gpt-4o",
   "openai/gpt-4o-mini",
@@ -29,8 +29,14 @@ const UI_STYLES = [
   { id: "cartoony", label: "Cartoony" },
   { id: "neon",     label: "Neon"     },
 ] as const
-
 type UIStyle = typeof UI_STYLES[number]["id"]
+
+const SUGGESTIONS = [
+  "Make a spinning part",
+  "Build a leaderboard",
+  "Add a kill brick",
+  "Create a DataStore system",
+]
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -48,6 +54,7 @@ type Message = {
   id: string
   role: "user" | "assistant" | "system"
   content: string
+  thinking?: string      // ← AI's plan thought, shown in thought bubble
   steps?: Step[]
   phase?: Phase
   imageDataUrl?: string
@@ -84,6 +91,98 @@ function Spinner() {
   )
 }
 
+// ── Thought Bubble ────────────────────────────────────────────────────────────
+
+function ThoughtBubble({ thinking }: { thinking: string }) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div className="mb-1.5">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/15 hover:border-purple-500/35 transition-all group"
+      >
+        <span className="text-[11px]">💭</span>
+        <span className="text-purple-300/55 text-[11px] group-hover:text-purple-300/80 transition-colors">
+          {open ? "Hide thinking" : "See thinking"}
+        </span>
+        <span className={`text-purple-400/35 text-[9px] transition-transform duration-200 ${open ? "rotate-180" : ""}`}>
+          ▼
+        </span>
+      </button>
+
+      {open && (
+        <div className="mt-1.5 px-3.5 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] text-white/35 text-xs leading-relaxed italic">
+          {thinking}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Color-coded summary line ──────────────────────────────────────────────────
+
+function SummaryLine({ line }: { line: string }) {
+  const l = line.toLowerCase()
+
+  // Dim header lines e.g. "Here's a summary of the work done:"
+  if (l.includes("summary") || (l.endsWith(":") && l.length < 60)) {
+    return (
+      <p className="text-white/25 text-[10px] uppercase tracking-wider font-medium mb-0.5">
+        {line}
+      </p>
+    )
+  }
+
+  // Created / built / added / generated → emerald green
+  if (/\b(creat|built|added|generated|set up|insert|spawn|wrote)\w*\b/.test(l)) {
+    return (
+      <div className="flex items-start gap-2">
+        <span className="text-emerald-400 text-xs mt-[3px] shrink-0">✦</span>
+        <p className="text-emerald-300/85 text-sm leading-relaxed">{line}</p>
+      </div>
+    )
+  }
+
+  // Modified / updated / changed / fixed → sky blue
+  if (/\b(modif|updat|chang|fix|patch|adjust|tweak|edit)\w*\b/.test(l)) {
+    return (
+      <div className="flex items-start gap-2">
+        <span className="text-sky-400 text-xs mt-[3px] shrink-0">✦</span>
+        <p className="text-sky-300/85 text-sm leading-relaxed">{line}</p>
+      </div>
+    )
+  }
+
+  // Deleted / removed → red/rose
+  if (/\b(delet|remov|destroy|clear|wip)\w*\b/.test(l)) {
+    return (
+      <div className="flex items-start gap-2">
+        <span className="text-rose-400 text-xs mt-[3px] shrink-0">✦</span>
+        <p className="text-rose-300/80 text-sm leading-relaxed">{line}</p>
+      </div>
+    )
+  }
+
+  // Script / GUI mentions → purple
+  if (/\b(script|localscript|modulescript|gui|screengui|remote)\w*\b/.test(l)) {
+    return (
+      <div className="flex items-start gap-2">
+        <span className="text-purple-400 text-xs mt-[3px] shrink-0">✦</span>
+        <p className="text-purple-300/85 text-sm leading-relaxed">{line}</p>
+      </div>
+    )
+  }
+
+  // Default
+  return (
+    <div className="flex items-start gap-2">
+      <span className="text-white/20 text-xs mt-[3px] shrink-0">·</span>
+      <p className="text-white/60 text-sm leading-relaxed">{line}</p>
+    </div>
+  )
+}
+
 // ── Step item ─────────────────────────────────────────────────────────────────
 
 function StepItem({ step }: { step: Step }) {
@@ -93,7 +192,6 @@ function StepItem({ step }: { step: Step }) {
 
   return (
     <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/[0.04] last:border-0">
-      {/* Status indicator */}
       <div className="w-4 h-4 flex items-center justify-center shrink-0">
         {isDone    && <span className="text-emerald-400 text-sm font-bold leading-none">✓</span>}
         {isRunning && <Spinner />}
@@ -102,8 +200,6 @@ function StepItem({ step }: { step: Step }) {
           <span className="w-1.5 h-1.5 rounded-full bg-white/[0.12] block" />
         )}
       </div>
-
-      {/* Text */}
       <div className="flex flex-col min-w-0 flex-1">
         <span className={`text-sm leading-snug transition-all duration-500 ${
           isDone    ? "line-through text-white/20" :
@@ -132,15 +228,21 @@ function StepCard({ steps }: { steps: Step[] }) {
   )
 }
 
-// ── Assistant message renderer ────────────────────────────────────────────────
+// ── Assistant message ─────────────────────────────────────────────────────────
 
 function AssistantMessage({ msg }: { msg: Message }) {
-  const { phase, content, steps } = msg
+  const { phase, content, steps, thinking } = msg
+  const isBuild = steps && steps.length > 0
 
   return (
-    <div className="w-full flex flex-col gap-2.5">
+    <div className="w-full flex flex-col gap-2">
 
-      {/* Planning = dots only */}
+      {/* Thought bubble — only for build responses, once we have a plan */}
+      {thinking && phase !== "planning" && (
+        <ThoughtBubble thinking={thinking} />
+      )}
+
+      {/* Planning dots */}
       {phase === "planning" && (
         <div className="flex items-center gap-1.5 py-1">
           <span className="w-1.5 h-1.5 rounded-full bg-purple-400/40 animate-bounce [animation-delay:0ms]" />
@@ -149,17 +251,12 @@ function AssistantMessage({ msg }: { msg: Message }) {
         </div>
       )}
 
-      {/* Thinking text during execution */}
-      {phase === "executing" && content && (
-        <p className="text-white/45 text-sm leading-relaxed">{content}</p>
-      )}
-
-      {/* Steps card */}
-      {steps && steps.length > 0 && phase !== "planning" && (
+      {/* Steps */}
+      {isBuild && phase !== "planning" && (
         <StepCard steps={steps} />
       )}
 
-      {/* Finalizing spinner */}
+      {/* Finalizing */}
       {phase === "finalizing" && (
         <div className="flex items-center gap-2 text-white/30 text-xs">
           <Spinner />
@@ -167,29 +264,41 @@ function AssistantMessage({ msg }: { msg: Message }) {
         </div>
       )}
 
-      {/* Injected confirmation */}
+      {/* Injected */}
       {phase === "injected" && (
         <p className="text-emerald-400/70 text-xs font-medium">Injected into Studio ✓</p>
       )}
 
-      {/* Done = summary or conversational reply */}
+      {/* Done — color-coded summary for builds, plain text for chat */}
       {phase === "done" && content && (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1.5">
           {content
             .split("\n")
             .filter(Boolean)
-            .map((line, i) => (
-              <p key={i} className="text-white/65 text-sm leading-relaxed whitespace-pre-wrap">
-                {line.replace(/^\*+\s*/g, "").replace(/[🟢🟡🔵⚫🟠]/g, "").trim()}
-              </p>
-            ))}
+            .map((line, i) => {
+              const clean = line
+                .replace(/^\*+\s*/g, "")
+                .replace(/[🟢🟡🔵⚫🟠]/g, "")
+                .trim()
+              if (!clean) return null
+
+              // Build response → color-coded
+              if (isBuild) return <SummaryLine key={i} line={clean} />
+
+              // Conversational → plain readable
+              return (
+                <p key={i} className="text-white/70 text-sm leading-relaxed">
+                  {clean}
+                </p>
+              )
+            })}
         </div>
       )}
     </div>
   )
 }
 
-// ── System bubble (model switch) ──────────────────────────────────────────────
+// ── System bubble ─────────────────────────────────────────────────────────────
 
 function SystemBubble({ msg }: { msg: Message }) {
   return (
@@ -224,13 +333,13 @@ export default function ChatArea() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const abortRef    = useRef(false)
 
-  // ── Load user + ownerMode ─────────────────────────────────────────────────
+  // ── Load user ──────────────────────────────────────────────────────────────
   useEffect(() => {
     fetchUser().then(u => { if (u) setUser(u) })
     setOwnerMode(localStorage.getItem("elx_owner") === "true")
   }, [])
 
-  // ── Credits polling ───────────────────────────────────────────────────────
+  // ── Credits polling ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!user?.id) return
     const load = async () => {
@@ -244,7 +353,7 @@ export default function ChatArea() {
     return () => clearInterval(id)
   }, [user?.id])
 
-  // ── Plugin status polling ─────────────────────────────────────────────────
+  // ── Plugin polling ─────────────────────────────────────────────────────────
   useEffect(() => {
     const check = async () => {
       try {
@@ -258,12 +367,12 @@ export default function ChatArea() {
     return () => clearInterval(id)
   }, [user?.id])
 
-  // ── Auto scroll ───────────────────────────────────────────────────────────
+  // ── Auto scroll ────────────────────────────────────────────────────────────
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
 
-  // ── Auto resize textarea ──────────────────────────────────────────────────
+  // ── Textarea resize ────────────────────────────────────────────────────────
   useEffect(() => {
     const el = textareaRef.current
     if (!el) return
@@ -271,7 +380,7 @@ export default function ChatArea() {
     el.style.height = Math.min(el.scrollHeight, 160) + "px"
   }, [input])
 
-  // ── Image paste ───────────────────────────────────────────────────────────
+  // ── Image paste ────────────────────────────────────────────────────────────
   useEffect(() => {
     const el = textareaRef.current
     if (!el) return
@@ -291,7 +400,7 @@ export default function ChatArea() {
     return () => el.removeEventListener("paste", onPaste)
   }, [])
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
   function updateMsg(id: string, patch: Partial<Message>) {
     setMessages(prev => prev.map(m => m.id === id ? { ...m, ...patch } : m))
@@ -307,7 +416,6 @@ export default function ChatArea() {
     )
   }
 
-  // Builds a clean conversation string for AI context
   function buildContext(msgs: Message[]): string {
     return msgs
       .filter(m =>
@@ -327,66 +435,52 @@ export default function ChatArea() {
       .join("\n")
   }
 
-  // ── Model switch handler ───────────────────────────────────────────────────
+  // ── Model switch ───────────────────────────────────────────────────────────
   function handleModelChange(newModel: AIModel) {
     if (newModel.id === selectedModel.id) return
     setSelectedModel(newModel)
-
-    // Only show bubble if there's an active conversation
     if (messages.length === 0) return
 
     const switchId = `sys-${Date.now()}`
     setMessages(prev => [...prev, {
-      id: switchId,
-      role: "system",
+      id: switchId, role: "system",
       content: `Switched to ${newModel.name}`,
       scanning: true,
     }])
-
-    // Model has "read" context after 1.5s
     setTimeout(() => {
-      setMessages(prev =>
-        prev.map(m => m.id === switchId ? { ...m, scanning: false } : m)
-      )
+      setMessages(prev => prev.map(m => m.id === switchId ? { ...m, scanning: false } : m))
     }, 1500)
   }
 
-  // ── Send ──────────────────────────────────────────────────────────────────
+  // ── Send ───────────────────────────────────────────────────────────────────
   async function send() {
     const content = input.trim()
     if (!content || loading) return
 
-    // ── Owner passphrase ──────────────────────────────────────────────────────
+    // Owner passphrase
     if (content.includes(OWNER_PHRASE)) {
       setOwnerMode(true)
       localStorage.setItem("elx_owner", "true")
       setMessages(prev => [
         ...prev,
         { id: `u-${Date.now()}`, role: "user", content },
-        {
-          id: `a-${Date.now()}`,
-          role: "assistant",
-          content: "✅ Owner mode activated. Full access — no restrictions.",
-          phase: "done",
-        },
+        { id: `a-${Date.now()}`, role: "assistant", content: "✅ Owner control activated. Full access granted.", phase: "done" },
       ])
       setInput("")
       return
     }
 
     const imageToSend = attachedImage
-    const contextSnap = buildContext(messages) // snapshot BEFORE adding new messages
+    const contextSnap = buildContext(messages)
 
-    // ── Vision gate ───────────────────────────────────────────────────────────
+    // Vision gate
     if (imageToSend && !VISION_MODELS.has(selectedModel.apiId)) {
       setMessages(prev => [
         ...prev,
         { id: `u-${Date.now()}`, role: "user", content, imageDataUrl: imageToSend },
         {
-          id: `a-${Date.now()}`,
-          role: "assistant",
-          content: "Sorry, I don't have photo access with this model. Please switch to Gemini Flash, GPT-4o, or Claude to use image references!",
-          phase: "done",
+          id: `a-${Date.now()}`, role: "assistant", phase: "done",
+          content: "Sorry, image input isn't supported with this model. Switch to Gemini Flash, GPT-4o, or Claude to use image references!",
         },
       ])
       setAttachedImage(null)
@@ -406,13 +500,7 @@ export default function ChatArea() {
       imageDataUrl: imageToSend ?? undefined,
     }
     const aId  = `a-${Date.now() + 1}`
-    const aMsg: Message = {
-      id: aId,
-      role: "assistant",
-      content: "",
-      phase: "planning",
-      steps: [],
-    }
+    const aMsg: Message = { id: aId, role: "assistant", content: "", phase: "planning", steps: [] }
 
     setMessages(prev => [...prev, uMsg, aMsg])
 
@@ -433,10 +521,10 @@ export default function ChatArea() {
 
       const plan = await planRes.json()
 
-      // ── Conversational — just show reply, no code ──────────────────────────
+      // ── ✅ FIXED: conversational uses plan.reply (not plan.thinking) ───────
       if (plan.conversational === true) {
         updateMsg(aId, {
-          content: plan.thinking ?? "Got it!",
+          content: plan.reply ?? "What can I help you with?",
           phase: "done",
           steps: [],
         })
@@ -444,23 +532,23 @@ export default function ChatArea() {
         return
       }
 
+      // ── Build flow ─────────────────────────────────────────────────────────
       const steps: Step[] = (plan.steps ?? []).map((s: Step) => ({
-        ...s,
-        status: "pending" as const,
+        ...s, status: "pending" as const,
       }))
 
       updateMsg(aId, {
-        content: plan.thinking ?? "Here's what I'll build:",
+        thinking: plan.thinking ?? undefined,   // ← stored for thought bubble
+        content: "",
         phase: "executing",
         steps,
       })
 
-      // ── 2. Execute each step ───────────────────────────────────────────────
+      // ── 2. Execute steps ───────────────────────────────────────────────────
       const completedSteps: Step[] = []
 
       for (const step of steps) {
         if (abortRef.current) break
-
         updateStep(aId, step.id, "running")
 
         if (step.type === "test") {
@@ -489,10 +577,7 @@ export default function ChatArea() {
 
         if (!execRes.ok || !execData.ok) {
           updateStep(aId, step.id, "error")
-          updateMsg(aId, {
-            content: execData.error ?? "Something went wrong.",
-            phase: "done",
-          })
+          updateMsg(aId, { content: execData.error ?? "Something went wrong.", phase: "done" })
           setLoading(false)
           return
         }
@@ -502,23 +587,19 @@ export default function ChatArea() {
         await new Promise(r => setTimeout(r, 350))
       }
 
-      // ── 3. Finalizing ─────────────────────────────────────────────────────
+      // ── 3. Finalizing ──────────────────────────────────────────────────────
       updateMsg(aId, { phase: "finalizing" })
       await new Promise(r => setTimeout(r, 900))
 
-      // ── 4. Injected ───────────────────────────────────────────────────────
+      // ── 4. Injected ────────────────────────────────────────────────────────
       updateMsg(aId, { phase: "injected" })
       await new Promise(r => setTimeout(r, 800))
 
-      // ── 5. Summary ────────────────────────────────────────────────────────
+      // ── 5. Summary ─────────────────────────────────────────────────────────
       const sumRes  = await fetch("/api/chat/summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userRequest: content,
-          completedSteps,
-          robloxId: user?.id ?? null,
-        }),
+        body: JSON.stringify({ userRequest: content, completedSteps, robloxId: user?.id ?? null }),
       })
       const sumData = await sumRes.json()
 
@@ -527,7 +608,7 @@ export default function ChatArea() {
         phase: "done",
       })
 
-      // ── Refresh credits ───────────────────────────────────────────────────
+      // Refresh credits
       if (user?.id) {
         try {
           const cr = await fetch(`/api/credits?robloxId=${user.id}`)
@@ -536,23 +617,13 @@ export default function ChatArea() {
       }
 
     } catch (e: any) {
-      updateMsg(aId, {
-        content: `⚠ ${e?.message ?? "Something went wrong."}`,
-        phase: "done",
-      })
+      updateMsg(aId, { content: `⚠ ${e?.message ?? "Something went wrong."}`, phase: "done" })
     } finally {
       setLoading(false)
     }
   }
 
-  const SUGGESTIONS = [
-    "Make a spinning part",
-    "Build a leaderboard",
-    "Add a kill brick",
-    "Create a DataStore system",
-  ]
-
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full bg-[#080808] relative">
       {showShop && <ShopModal onClose={() => setShowShop(false)} />}
@@ -584,7 +655,7 @@ export default function ChatArea() {
       <div className="flex-1 overflow-y-auto relative z-10 px-4 py-6">
         {messages.length === 0 ? (
 
-          /* ── Empty state ── */
+          /* Empty state */
           <div className="flex flex-col items-center justify-center h-full min-h-[50vh] text-center gap-5">
             <div className="w-16 h-16 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-3xl shadow-[0_0_50px_rgba(139,92,246,0.12)]">
               🧪
@@ -610,21 +681,16 @@ export default function ChatArea() {
 
         ) : (
 
-          /* ── Message list ── */
+          /* Message list */
           <div className="max-w-2xl mx-auto space-y-4 pb-2">
             {messages.map(msg => {
-
-              // System bubble (model switch)
-              if (msg.role === "system") {
-                return <SystemBubble key={msg.id} msg={msg} />
-              }
+              if (msg.role === "system") return <SystemBubble key={msg.id} msg={msg} />
 
               return (
                 <div
                   key={msg.id}
                   className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                 >
-                  {/* Elixir avatar */}
                   {msg.role === "assistant" && (
                     <div className="w-7 h-7 rounded-lg bg-purple-500/15 border border-purple-500/20 flex items-center justify-center text-[15px] shrink-0 mt-0.5">
                       🧪
@@ -654,7 +720,6 @@ export default function ChatArea() {
                     )}
                   </div>
 
-                  {/* User avatar */}
                   {msg.role === "user" && (
                     <div className="w-7 h-7 rounded-lg overflow-hidden shrink-0 mt-0.5 border border-white/[0.08] bg-white/[0.04] flex items-center justify-center">
                       {user?.avatarUrl ? (
@@ -679,9 +744,7 @@ export default function ChatArea() {
 
         {/* UI Style selector */}
         <div className="flex items-center gap-1.5 mb-2 px-0.5">
-          <span className="text-white/15 text-[9px] uppercase tracking-widest mr-0.5">
-            Style
-          </span>
+          <span className="text-white/15 text-[9px] uppercase tracking-widest mr-0.5">Style</span>
           {UI_STYLES.map(s => (
             <button
               key={s.id}
@@ -700,11 +763,7 @@ export default function ChatArea() {
         {/* Attached image preview */}
         {attachedImage && (
           <div className="relative inline-block mb-2">
-            <img
-              src={attachedImage}
-              alt="attached"
-              className="h-14 rounded-xl border border-white/10 object-cover"
-            />
+            <img src={attachedImage} alt="attached" className="h-14 rounded-xl border border-white/10 object-cover" />
             <button
               onClick={() => setAttachedImage(null)}
               className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[#111] border border-white/10 hover:bg-red-500/60 text-white/50 text-[9px] flex items-center justify-center transition-all"
@@ -726,10 +785,7 @@ export default function ChatArea() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault()
-                send()
-              }
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() }
             }}
             placeholder={
               pluginConnected
@@ -741,7 +797,6 @@ export default function ChatArea() {
           />
 
           <div className="absolute bottom-3 left-4 right-4 flex items-center gap-2">
-            {/* Credits */}
             <button
               onClick={() => setShowShop(true)}
               className="shrink-0 flex items-center gap-1.5 text-xs text-white/[0.18] hover:text-purple-400/60 border border-white/[0.06] hover:border-purple-500/20 px-2.5 py-1 rounded-lg transition-all"
@@ -751,11 +806,7 @@ export default function ChatArea() {
             </button>
 
             <div className="flex items-center gap-2 ml-auto">
-              <ModelSelector
-                value={selectedModel.id}
-                onChange={handleModelChange}
-                userCredits={userCredits}
-              />
+              <ModelSelector value={selectedModel.id} onChange={handleModelChange} userCredits={userCredits} />
 
               {loading ? (
                 <button

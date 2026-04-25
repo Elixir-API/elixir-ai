@@ -129,15 +129,15 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {/* New Chat */}
-      <div className="px-3 mb-3">
-        <Link
-          href="/chat"
-          className="flex items-center gap-2 w-full px-3 py-2 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/20 text-purple-300 text-sm font-medium transition-all"
-        >
-          <span>+</span> New Chat
-        </Link>
-      </div>
+     {/* New Chat */}
+<div className="px-3 mb-3">
+  <button
+    onClick={() => { window.location.href = "/chat" }}
+    className="flex items-center gap-2 w-full px-3 py-2 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/20 text-purple-300 text-sm font-medium transition-all"
+  >
+    <span>+</span> New Chat
+  </button>
+</div>
 
       {/* Nav */}
       <div className="px-3 space-y-0.5">
