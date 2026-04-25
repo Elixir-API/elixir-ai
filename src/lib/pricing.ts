@@ -42,7 +42,7 @@ export function estimateCreditCost(
   return { credits, isFree: false, estimatedUSD: totalUSD }
 }
 
-export function formatcredits(credits: number): string {
+export function formatCredits(credits: number): string {
   if (credits === 0) return "free"
   return credits.toFixed(2)
 }
