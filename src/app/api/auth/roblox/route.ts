@@ -12,7 +12,9 @@ export async function GET(req: NextRequest) {
     path: "/",
   });
 
-  const baseUrl = `${req.nextUrl.protocol}//${req.nextUrl.host}`;
+  // ✅ Use env var — req.nextUrl.protocol returns "http:" on Vercel
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "")
+    ?? `https://${req.nextUrl.host}`;
 
   const params = new URLSearchParams({
     client_id: process.env.ROBLOX_CLIENT_ID!,
