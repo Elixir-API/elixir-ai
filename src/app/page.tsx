@@ -4,10 +4,10 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 const LANDING_MODELS = [
-  { name: "Qwen 2.5 Coder", tier: "Free",  color: "from-green-500 to-emerald-500",  credits: "Free",       badge: "FREE"  },
-  { name: "Llama 3.3 70B",  tier: "Low",   color: "from-sky-400 to-blue-600",       credits: "~0.2 cr/msg", badge: null   },
-  { name: "GPT-4o Mini",    tier: "Mid",   color: "from-teal-400 to-cyan-600",      credits: "~0.4 cr/msg", badge: null   },
-  { name: "Claude Sonnet",  tier: "High",  color: "from-orange-400 to-red-500",     credits: "~10 cr/msg",  badge: null   },
+  { name: "gemma-2-9b", tier: "Free",  color: "from-green-500 to-emerald-500",        badge: "FREE", credits: "Free" },
+  { name: "Llama 3.3 70B",  tier: "Low",   color: "from-sky-400 to-blue-600",        badge: null, credits: "5 cr" },
+  { name: "GPT-4o Mini",    tier: "Mid",   color: "from-teal-400 to-cyan-600",     badge: null, credits: "8 cr" },
+  { name: "Claude Sonnet",  tier: "High",  color: "from-orange-400 to-red-500",   badge: null, credits: "12 cr" },
 ]
 
 export default function LandingPage() {

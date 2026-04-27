@@ -1,4 +1,5 @@
 import { kv } from "@vercel/kv"
+import { isDev, DEV_CREDIT_BALANCE } from "./dev-accounts"
 
 // ─── CAD Config ───────────────────────────────────────────────────────────────
 export const USD_TO_CAD          = 1.38
@@ -22,6 +23,9 @@ export const CREDIT_PACKS = [
 // ─── KV Helpers ───────────────────────────────────────────────────────────────
 
 export async function getCredits(robloxId: string): Promise<number> {
+  if (isDev(robloxId)) {
+    return DEV_CREDIT_BALANCE
+  }
   const credits = await kv.get<number>(`credits:${robloxId}`)
   return credits ?? STARTING_CREDITS
 }
@@ -43,6 +47,9 @@ export async function deductCredits(
   robloxId: string,
   amount: number
 ): Promise<{ ok: boolean; error?: string; remaining?: number }> {
+  if (isDev(robloxId)) {
+    return { ok: true, remaining: DEV_CREDIT_BALANCE }
+  }
   const current = await getCredits(robloxId)
 
   if (current < amount) {
